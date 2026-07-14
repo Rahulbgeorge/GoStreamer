@@ -9,21 +9,21 @@ import (
 
 // Config holds the application configuration parameters.
 type Config struct {
-	ServerPort      string
-	DatabasePath    string
-	MediaDir        string
-	DownloadDir     string
-	UploadDir       string
-	ThumbnailDir    string
-	LogLevel        string
-	DefaultLanguage string
+	ServerPort        string
+	DatabasePath      string
+	MediaDir          string
+	DownloadDir       string
+	UploadDir         string
+	ThumbnailDir      string
+	LogLevel          string
+	DefaultLanguage   string
 	AllowedExtensions []string
 }
 
 // Load reads config from environment variables or applies defaults.
 func Load() *Config {
 	homeDir, err := os.UserHomeDir()
-	
+
 	// If running under sudo, override the home directory to target the original user instead of /var/root
 	if sudoUser := os.Getenv("SUDO_USER"); sudoUser != "" && sudoUser != "root" {
 		homeDir = "/Users/" + sudoUser
@@ -40,7 +40,8 @@ func Load() *Config {
 	allowedExts := []string{".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm", ".m4v", ".ts"}
 
 	return &Config{
-		ServerPort:        getEnv("SERVER_PORT", "8080"),
+		// ServerPort:        getEnv("SERVER_PORT", "8000"),
+		ServerPort:        "8000",
 		DatabasePath:      getEnv("DATABASE_PATH", filepath.Join(baseDir, "data", "streaming.db")),
 		MediaDir:          getEnv("MEDIA_DIR", filepath.Join(baseDir, "media")),
 		DownloadDir:       getEnv("DOWNLOAD_DIR", filepath.Join(baseDir, "downloads")),
