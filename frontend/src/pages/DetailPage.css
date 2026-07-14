@@ -1,0 +1,244 @@
+.detail-page-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background-color: rgba(0,0,0,0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 900;
+}
+
+.detail-modal {
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  width: 90%;
+  max-width: 850px;
+  border-radius: 8px;
+  position: relative;
+  overflow: hidden;
+  box-shadow: 0 15px 40px rgba(0,0,0,0.6);
+  padding: var(--space-lg);
+}
+
+.detail-close-btn {
+  position: absolute;
+  top: 15px;
+  right: 15px;
+  font-size: 20px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  z-index: 10;
+}
+
+.detail-close-btn:hover {
+  color: var(--text-primary);
+}
+
+.detail-layout {
+  display: flex;
+  gap: var(--space-lg);
+}
+
+.detail-poster-sec {
+  width: 300px;
+  height: 200px;
+  flex-shrink: 0;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid var(--border-color);
+  background-color: #000;
+}
+
+.detail-poster {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.detail-poster-fallback {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 36px;
+  font-weight: bold;
+  color: var(--text-muted);
+}
+
+.detail-info-sec {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  flex-grow: 1;
+}
+
+.detail-title {
+  font-size: 28px;
+  font-weight: 800;
+  color: #fff;
+}
+
+.detail-meta-row {
+  display: flex;
+  gap: var(--space-lg);
+  flex-wrap: wrap;
+}
+
+.meta-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.meta-item .label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+}
+
+.meta-item .val {
+  font-size: 14px;
+  font-weight: bold;
+}
+
+.meta-item .val.badge {
+  background-color: var(--accent);
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 11px;
+}
+
+.detail-specs {
+  font-size: 13px;
+  color: var(--text-secondary);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background-color: var(--bg-primary);
+  padding: var(--space-md);
+  border-radius: 4px;
+  border: 1px solid var(--border-color);
+}
+
+.path-code {
+  background-color: var(--bg-card);
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 12px;
+  word-break: break-all;
+}
+
+.detail-action-buttons {
+  display: flex;
+  gap: var(--space-md);
+  margin-top: var(--space-sm);
+}
+
+.btn-detail {
+  padding: 10px 20px;
+  font-weight: bold;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: var(--transition-fast);
+}
+
+.btn-detail.play {
+  background-color: var(--accent);
+  color: white;
+  flex-grow: 1;
+}
+
+.btn-detail.play:hover {
+  background-color: var(--accent-hover);
+}
+
+.btn-detail.edit {
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-color);
+}
+
+.btn-detail.edit:hover {
+  background-color: var(--bg-card-hover);
+}
+
+.btn-detail.delete {
+  background-color: rgba(229, 9, 20, 0.15);
+  color: var(--accent-hover);
+  border: 1px solid rgba(229, 9, 20, 0.3);
+}
+
+.btn-detail.delete:hover {
+  background-color: rgba(229, 9, 20, 0.3);
+}
+
+@media (max-width: 768px) {
+  .detail-layout {
+    flex-direction: column;
+  }
+  .detail-poster-sec {
+    width: 100%;
+    height: 180px;
+  }
+}
+
+.detail-processing-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: rgba(168, 85, 247, 0.08);
+  border: 1px solid rgba(168, 85, 247, 0.25);
+  border-radius: 6px;
+  padding: 10px 14px;
+  color: #c084fc;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.4;
+  animation: pulse-banner-border 2s infinite ease-in-out;
+}
+
+.detail-processing-banner .banner-icon {
+  font-size: 20px;
+  animation: gear-spin 3s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes gear-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes pulse-banner-border {
+  0% { border-color: rgba(168, 85, 247, 0.25); box-shadow: 0 0 0 rgba(168, 85, 247, 0); }
+  50% { border-color: rgba(168, 85, 247, 0.5); box-shadow: 0 0 10px rgba(168, 85, 247, 0.15); }
+  100% { border-color: rgba(168, 85, 247, 0.25); box-shadow: 0 0 0 rgba(168, 85, 247, 0); }
+}
+
+/* TV D-pad focus styling for DetailPage action buttons */
+.btn-detail.focused {
+  outline: 3px solid #fff !important;
+  box-shadow: 0 0 20px rgba(255, 255, 255, 0.6) !important;
+  transform: scale(1.05) !important;
+  border-color: #fff !important;
+}
+
+/* Play Now button white overlay style when focused */
+.btn-detail.play.focused {
+  position: relative;
+}
+
+.btn-detail.play.focused::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(255, 255, 255, 0.25);
+  border-radius: 4px;
+  pointer-events: none;
+}
+

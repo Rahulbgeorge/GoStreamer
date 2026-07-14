@@ -1,0 +1,101 @@
+.hero-banner {
+  height: 55vh;
+  min-height: 400px;
+  background-size: cover;
+  background-position: center;
+  display: flex;
+  align-items: flex-end;
+  padding: var(--space-xl) var(--space-lg);
+  position: relative;
+  overflow: hidden;
+}
+
+.hero-content {
+  max-width: 650px;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  margin-bottom: var(--space-md);
+}
+
+.hero-title {
+  font-size: 42px;
+  font-weight: 900;
+  text-shadow: 0 2px 10px rgba(0,0,0,0.8);
+  line-height: 1.1;
+  color: #ffffff;
+}
+
+.hero-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  font-size: 16px;
+  font-weight: bold;
+}
+
+.hero-meta .badge {
+  background-color: var(--accent);
+  padding: 2px 6px;
+  font-size: 11px;
+  border-radius: 3px;
+  color: white;
+}
+
+.hero-meta .badge.lang {
+  background-color: transparent;
+  border: 1px solid var(--text-secondary);
+  color: var(--text-secondary);
+}
+
+.hero-description {
+  font-size: 14px;
+  color: var(--text-secondary);
+  text-shadow: 0 1px 5px rgba(0,0,0,0.6);
+  line-height: 1.4;
+}
+
+.hero-buttons {
+  display: flex;
+  gap: var(--space-md);
+}
+
+.btn-hero {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 10px 24px;
+  font-weight: bold;
+  font-size: 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: var(--transition-fast);
+}
+
+.btn-hero.play {
+  background-color: #ffffff;
+  color: #000000;
+}
+
+.btn-hero.play:hover {
+  background-color: rgba(255,255,255,0.75);
+}
+
+.btn-hero.info {
+  background-color: rgba(109, 109, 110, 0.7);
+  color: #ffffff;
+}
+
+.btn-hero.info:hover {
+  background-color: rgba(109, 109, 110, 0.4);
+}
+
+@media (max-width: 768px) {
+  .hero-banner {
+    height: 45vh;
+  }
+  .hero-title {
+    font-size: 30px;
+  }
+}

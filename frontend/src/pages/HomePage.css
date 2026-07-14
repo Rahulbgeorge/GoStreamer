@@ -1,0 +1,264 @@
+.homepage-wrapper {
+  min-height: 100vh;
+  background-color: var(--bg-primary);
+  display: flex;
+  flex-direction: column;
+}
+
+.home-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--space-md) var(--space-lg);
+  background-color: rgba(11, 11, 15, 0.95);
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.header-brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.brand-logo {
+  font-size: 28px;
+}
+
+.header-brand h1 {
+  font-size: 22px;
+  font-weight: 900;
+  color: var(--accent);
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.btn-action.admin {
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-color);
+  padding: 8px 16px;
+  border-radius: 4px;
+  font-weight: bold;
+  cursor: pointer;
+  transition: var(--transition-fast);
+}
+
+.btn-action.admin:hover {
+  background-color: var(--bg-card-hover);
+  border-color: var(--text-muted);
+}
+
+.stats-row {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-lg);
+  padding: var(--space-sm) var(--space-lg);
+  background-color: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.loading-spinner {
+  margin: auto;
+  padding: var(--space-xl);
+  font-size: 18px;
+  color: var(--text-secondary);
+}
+
+.no-movies-fallback {
+  padding: var(--space-xl);
+  text-align: center;
+  color: var(--text-secondary);
+  max-width: 600px;
+  margin: 100px auto;
+  font-size: 16px;
+  line-height: 1.6;
+}
+
+.all-movies-grid-section {
+  padding: var(--space-lg);
+}
+
+.all-movies-grid-section h3 {
+  font-size: 18px;
+  margin-bottom: var(--space-md);
+}
+
+.all-movies-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: var(--space-lg);
+}
+
+.grid-movie-card {
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: var(--space-sm);
+  cursor: pointer;
+  transition: var(--transition-smooth);
+  display: flex;
+  flex-direction: column;
+}
+
+.grid-movie-card:hover {
+  transform: translateY(-4px);
+  background-color: var(--bg-card-hover);
+}
+
+.grid-movie-card.focused {
+  display: flex;
+  flex-direction: row;
+  grid-column: span 2;
+  gap: 12px;
+  height: 125px;
+  align-items: center;
+}
+
+.grid-movie-card.focused .grid-poster-wrap {
+  width: 150px;
+  height: 100%;
+  flex-shrink: 0;
+  margin-bottom: 0;
+}
+
+.grid-movie-card.focused .grid-info-wrap {
+  flex-grow: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  overflow: hidden;
+}
+
+.grid-movie-card.focused h4 {
+  white-space: normal;
+  overflow: visible;
+  font-size: 15px;
+  font-weight: bold;
+  line-height: 1.2;
+}
+
+.grid-meta-wrap {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.grid-size {
+  font-size: 12px;
+  color: var(--accent-hover);
+  font-weight: bold;
+}
+
+.grid-poster-wrap {
+  position: relative;
+  height: 110px;
+  background-color: #000;
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: var(--space-sm);
+}
+
+.grid-poster-wrap img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.fallback-grid-poster {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  color: var(--text-muted);
+  font-weight: bold;
+}
+
+.quality-badge {
+  position: absolute;
+  bottom: 6px;
+  left: 6px;
+  background-color: var(--accent);
+  color: white;
+  padding: 1px 5px;
+  font-size: 9px;
+  font-weight: bold;
+  border-radius: 2px;
+}
+
+.grid-movie-card h4 {
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-primary);
+}
+
+.grid-year {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+@media (max-width: 768px) {
+  .home-header {
+    flex-direction: column;
+    gap: var(--space-md);
+    align-items: stretch;
+  }
+  .header-actions {
+    justify-content: space-between;
+  }
+  .search-bar {
+    max-width: none;
+    flex-grow: 1;
+  }
+}
+
+/* TV Remote D-Pad Focus Styles */
+.grid-movie-card.focused,
+.btn-action.admin.focused,
+.search-bar-wrap.focused,
+.language-switcher-select.focused,
+.media-card.focused,
+.focused {
+  outline: 3px solid var(--accent) !important;
+  box-shadow: 0 0 25px var(--accent) !important;
+  transform: scale(1.07) !important;
+  background-color: var(--bg-card-hover) !important;
+  border-color: var(--accent) !important;
+}
+
+.grid-movie-card.focused,
+.media-card.focused {
+  position: relative;
+  z-index: 10;
+  animation: tv-focus-pop 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+}
+
+@keyframes tv-focus-pop {
+  0% {
+    transform: scale(1.0);
+  }
+  50% {
+    transform: scale(1.12);
+  }
+  100% {
+    transform: scale(1.07);
+  }
+}
+
+/* Hide cursor on TV/D-Pad navigation mode */
+body.tv-mode,
+body.tv-mode * {
+  cursor: none !important;
+}

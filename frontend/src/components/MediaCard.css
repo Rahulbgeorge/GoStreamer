@@ -1,0 +1,157 @@
+.media-card {
+  width: 220px;
+  flex-shrink: 0;
+  background-color: var(--bg-card);
+  border-radius: 6px;
+  overflow: hidden;
+  cursor: pointer;
+  border: 1px solid var(--border-color);
+  transition: var(--transition-smooth);
+}
+
+.media-card:hover {
+  transform: translateY(-6px) scale(1.03);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);
+  background-color: var(--bg-card-hover);
+}
+
+.media-card.focused {
+  display: flex;
+  flex-direction: row;
+  width: 330px !important; /* 150% of 220px */
+  height: 125px;
+  gap: 12px;
+}
+
+.media-card.focused .card-image-wrapper {
+  width: 150px !important;
+  height: 100%;
+  flex-shrink: 0;
+}
+
+.media-card.focused .card-info {
+  flex-grow: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  padding: var(--space-sm);
+  overflow: hidden;
+}
+
+.media-card.focused .card-title {
+  white-space: normal;
+  overflow: visible;
+  font-size: 15px;
+  font-weight: bold;
+  line-height: 1.2;
+}
+
+.card-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.card-size {
+  font-size: 12px;
+  color: var(--accent-hover);
+  font-weight: bold;
+}
+
+.card-image-wrapper {
+  position: relative;
+  width: 100%;
+  height: 125px;
+  background-color: #050508;
+  overflow: hidden;
+}
+
+.card-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.card-image-fallback {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  font-weight: bold;
+  color: var(--text-muted);
+}
+
+.card-badge {
+  position: absolute;
+  bottom: 8px;
+  padding: 2px 6px;
+  font-size: 10px;
+  font-weight: bold;
+  border-radius: 3px;
+}
+
+.card-badge.quality {
+  left: 8px;
+  background-color: var(--accent);
+  color: white;
+}
+
+.card-badge.lang {
+  right: 8px;
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--text-muted);
+  color: var(--text-primary);
+}
+
+.card-info {
+  padding: var(--space-sm) var(--space-md);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.card-title {
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-primary);
+}
+
+.card-year {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.card-processing-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.75);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: #a855f7; /* Purple glow for processing state */
+  font-size: 11px;
+  font-weight: 600;
+  backdrop-filter: blur(2px);
+  z-index: 5;
+}
+
+.card-processing-overlay .spinner-icon {
+  font-size: 20px;
+  animation: card-gear-spin 3s linear infinite;
+}
+
+@keyframes card-gear-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+

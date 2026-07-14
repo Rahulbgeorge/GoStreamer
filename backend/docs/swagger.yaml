@@ -1,0 +1,59 @@
+basePath: /api/v1
+host: localhost:8080
+info:
+  contact: {}
+  description: REST API Engine driving the StreamingPlayer media pipeline.
+  title: StreamingPlayer API
+  version: "1.0"
+paths:
+  /media:
+    get:
+      description: Retrieve a paginated list of cataloged video items.
+      parameters:
+      - default: 20
+        description: Items limit
+        in: query
+        name: limit
+        type: integer
+      - default: 0
+        description: Pagination offset
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: List of media
+          schema:
+            additionalProperties: true
+            type: object
+      summary: List all library media
+      tags:
+      - media
+  /media/{id}:
+    get:
+      description: Find metadata of a catalog item by its ID.
+      parameters:
+      - description: Media ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Media details
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Media not found
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Retrieve single media item details
+      tags:
+      - media
+swagger: "2.0"

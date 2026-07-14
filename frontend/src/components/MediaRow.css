@@ -1,0 +1,30 @@
+.media-row-container {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: 0 var(--space-lg);
+  margin-bottom: var(--space-lg);
+}
+
+.row-title {
+  font-size: 18px;
+  font-weight: bold;
+  color: var(--text-primary);
+}
+
+.row-cards-scroll {
+  display: flex;
+  gap: var(--space-md);
+  overflow-x: auto;
+  padding: 12px 0 var(--space-md) 0;
+  scroll-behavior: smooth;
+}
+
+.row-cards-scroll::-webkit-scrollbar {
+  height: 4px;
+}
+
+.row-cards-scroll::-webkit-scrollbar-thumb {
+  background-color: var(--border-color);
+  border-radius: 2px;
+}
