@@ -1,12 +1,19 @@
 import type { Media, LibraryStats, TorrentStatus, TorrentTarget } from '../types/media';
 
-export let API_BASE = `/api/v1`;
+export let API_BASE = (import.meta.env.VITE_API_BASE as string) || `/api/v1`;
 
 export function setApiBase(url: string) {
   API_BASE = url;
 }
 
 export async function initializeApiBase() {
+  // If VITE_API_BASE is set during build/runtime, use it directly in production
+  if (import.meta.env.VITE_API_BASE) {
+    setApiBase(import.meta.env.VITE_API_BASE);
+    console.log(`API_BASE set from build-time VITE_API_BASE: ${API_BASE}`);
+    return;
+  }
+
   const ip = `192.168.29.142`;
   
   const bases = [
@@ -28,6 +35,14 @@ export async function initializeApiBase() {
 
       if (res.ok) {
         const json = await res.json();
+        
+        // If we are connecting to a public production endpoint, do not override it with private local_url
+        if (base.startsWith('https://') || (window.location.origin && !window.location.origin.includes('localhost') && !window.location.origin.includes('127.0.0.1') && !window.location.origin.includes('192.168.'))) {
+          console.log(`Successfully reached production/public server at ${base}. Keeping API_BASE as is.`);
+          setApiBase(base);
+          return;
+        }
+
         const localUrl = json.local_url;
         if (localUrl) {
           console.log(`Successfully reached local server at ${localUrl}. Setting API_BASE.`);

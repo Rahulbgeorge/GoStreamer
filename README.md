@@ -67,3 +67,9 @@ npm run android:open   # Opens the native project in Android Studio
 ```
 For more information on emulator network configurations, dynamic local IPs, and web inspector debugging, read the **[detailed Android guide](file:///Users/rahulbg/Projects/StreamingPlayer/frontend/README.android.md)**.
 # GoStreamer
+
+
+
+# Deploying server:
+- update the config file for changing the server location port
+- `CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o myserver ./cmd/server`
