@@ -21,10 +21,8 @@ Thumbs.db
 
 # Node / Frontend
 node_modules/
-dist/
 dist-ssr/
 frontend/node_modules/
-frontend/dist/
 frontend/dist-ssr/
 *.log
 npm-debug.log*
