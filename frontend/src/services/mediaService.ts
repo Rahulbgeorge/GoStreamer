@@ -1,4 +1,4 @@
-import type { Media, LibraryStats, TorrentStatus, TorrentTarget } from '../types/media';
+import type { Media, LibraryStats, TorrentStatus, TorrentTarget, Preference, BrowseData } from '../types/media';
 
 export let API_BASE = (import.meta.env.VITE_API_BASE as string) || `/api/v1`;
 
@@ -7,56 +7,90 @@ export function setApiBase(url: string) {
 }
 
 export async function initializeApiBase() {
-  // If VITE_API_BASE is set during build/runtime, use it directly in production
+  // Determine the default server URL based on build config or current page origin
+  let defaultBase = '/api/v1'; // fallback relative path
   if (import.meta.env.VITE_API_BASE) {
-    setApiBase(import.meta.env.VITE_API_BASE);
-    console.log(`API_BASE set from build-time VITE_API_BASE: ${API_BASE}`);
-    return;
-  }
-
-  const ip = `192.168.29.142`;
-  
-  const bases = [
-    `http://${ip}:8080/api/v1`,
-    `http://${ip}:80/api/v1`
-  ];
-
-  if (window.location.origin && window.location.origin.startsWith('http') && !window.location.origin.includes('localhost') && !window.location.origin.includes('127.0.0.1')) {
-    bases.unshift(`${window.location.origin}/api/v1`);
-  }
-
-  for (const base of bases) {
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 1500);
-
-      const res = await fetch(`${base}/local-ip`, { signal: controller.signal });
-      clearTimeout(timeoutId);
-
-      if (res.ok) {
-        const json = await res.json();
-        
-        // If we are connecting to a public production endpoint, do not override it with private local_url
-        if (base.startsWith('https://') || (window.location.origin && !window.location.origin.includes('localhost') && !window.location.origin.includes('127.0.0.1') && !window.location.origin.includes('192.168.'))) {
-          console.log(`Successfully reached production/public server at ${base}. Keeping API_BASE as is.`);
-          setApiBase(base);
-          return;
-        }
-
-        const localUrl = json.local_url;
-        if (localUrl) {
-          console.log(`Successfully reached local server at ${localUrl}. Setting API_BASE.`);
-          setApiBase(`${localUrl}/api/v1`);
-          return;
-        }
-      }
-    } catch (err) {
-      // try next base URL
+    defaultBase = import.meta.env.VITE_API_BASE;
+  } else if (window.location.origin && window.location.origin.startsWith('http')) {
+    // If running in development/local on localhost:3000, default base to port 8000
+    if (window.location.origin.includes('localhost') || window.location.origin.includes('127.0.0.1')) {
+      defaultBase = `${window.location.protocol}//${window.location.hostname}:8000/api/v1`;
+    } else {
+      defaultBase = `${window.location.origin}/api/v1`;
     }
   }
 
-  // Fallback to the first base in the list
-  setApiBase(bases[0]);
+  // Set default first so that we have a working fallback
+  setApiBase(defaultBase);
+  console.log(`Setting initial default API base to: ${defaultBase}`);
+
+  // Fetch local IP info from the current default server
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 2000);
+    const res = await fetch(`${defaultBase}/local-ip`, { signal: controller.signal });
+    clearTimeout(timeoutId);
+
+    if (res.ok) {
+      const json = await res.json();
+      const localUrl = json.local_url; // e.g. "http://192.168.1.5:8000"
+      
+      if (localUrl) {
+        const localApiBase = `${localUrl}/api/v1`;
+        
+        // If they are identical (e.g. we connected directly via local IP), no switch needed
+        if (localApiBase.replace(/\/$/, '') === defaultBase.replace(/\/$/, '')) {
+          console.log(`Already connected directly via local IP: ${localApiBase}`);
+          return;
+        }
+
+        console.log(`Discovered server local IP URL: ${localApiBase}. Probing connection speed...`);
+
+        // Test if the local IP base is directly accessible by the client (Ping probe)
+        try {
+          const pingCtrl = new AbortController();
+          const pingTimeout = setTimeout(() => pingCtrl.abort(), 1500); // quick timeout
+          const pingRes = await fetch(`${localApiBase}/ping`, { signal: pingCtrl.signal });
+          clearTimeout(pingTimeout);
+
+          if (pingRes.ok) {
+            console.log(`Ping to local IP base succeeded. Switching API base to local IP: ${localApiBase} for faster performance.`);
+            setApiBase(localApiBase);
+            return;
+          }
+        } catch (pingErr) {
+          console.log(`Ping to local IP base failed. Client is likely remote. Continuing with default base: ${defaultBase}`);
+        }
+      }
+    }
+  } catch (err) {
+    console.log(`Failed to fetch local IP info from default base: ${defaultBase}. Falling back to default.`);
+  }
+
+  // Capacitor / Mobile fallback probe if default Base is localhost and failed
+  if (defaultBase.includes('localhost') || defaultBase.includes('127.0.0.1')) {
+    const fallbackIp = `192.168.29.142`;
+    const fallbackBases = [
+      `http://${fallbackIp}:8000/api/v1`,
+      `http://${fallbackIp}:8080/api/v1`,
+      `http://${fallbackIp}:80/api/v1`
+    ];
+    for (const base of fallbackBases) {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 1500);
+        const res = await fetch(`${base}/ping`, { signal: controller.signal });
+        clearTimeout(timeoutId);
+        if (res.ok) {
+          console.log(`Reached fallback local server at ${base}. Setting API_BASE.`);
+          setApiBase(base);
+          return;
+        }
+      } catch (err) {
+        // try next
+      }
+    }
+  }
 }
 
 export const mediaService = {
@@ -199,5 +233,34 @@ export const mediaService = {
       throw new Error(json.error || 'Failed to start YouTube download');
     }
     return json;
+  },
+
+  async getPreferences(): Promise<Preference[]> {
+    const res = await fetch(`${API_BASE}/preferences`);
+    const json = await res.json();
+    return json.data || [];
+  },
+
+  async setPreference(key: string, value: string): Promise<Preference> {
+    const res = await fetch(`${API_BASE}/preferences`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key, value })
+    });
+    const json = await res.json();
+    if (!res.ok) {
+      throw new Error(json.error || 'Failed to update preference');
+    }
+    return json.data;
+  },
+
+  async browseDirectory(path?: string): Promise<BrowseData> {
+    const query = path ? `?path=${encodeURIComponent(path)}` : '';
+    const res = await fetch(`${API_BASE}/system/browse${query}`);
+    const json = await res.json();
+    if (!res.ok) {
+      throw new Error(json.error || 'Failed to browse directory');
+    }
+    return json.data;
   }
 };

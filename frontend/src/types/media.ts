@@ -38,3 +38,19 @@ export interface TorrentTarget {
   size: string;
   link: string;
 }
+
+export interface Preference {
+  key: string;
+  value: string;
+}
+
+export interface DirectoryItem {
+  name: string;
+  path: string;
+}
+
+export interface BrowseData {
+  current_path: string;
+  parent_path: string;
+  directories: DirectoryItem[];
+}

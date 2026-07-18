@@ -38,7 +38,11 @@ const resources = {
       scanTitle: "Scan Local Directory",
       scanHelp: "Trigger a directory scan to automatically catalog new movie files and remove entries for deleted ones.",
       scanBtn: "Scan Folder Now",
-      scanSuccess: "Scan initiated! The library is updating in the background."
+      scanSuccess: "Scan initiated! The library is updating in the background.",
+      settingsTitle: "Settings & Folders",
+      settingsHelp: "Browse and select the active media folder on the host system.",
+      settingsSaveBtn: "Select & Save Folder",
+      settingsSuccess: "Media folder updated successfully in database!"
     }
   },
   hi: {
@@ -77,7 +81,11 @@ const resources = {
       scanTitle: "स्थानीय निर्देशिका स्कैन करें",
       scanHelp: "नए वीडियो खोजने और हटाए गए वीडियो को कैटलॉग से हटाने के लिए फ़ोल्डर स्कैन शुरू करें।",
       scanBtn: "फ़ोल्डर स्कैन करें",
-      scanSuccess: "स्कैन सफलतापूर्वक शुरू हुआ! आपका कैटलॉग पृष्ठभूमि में अपडेट हो रहा है।"
+      scanSuccess: "स्कैन सफलतापूर्वक शुरू हुआ! आपका कैटलॉग पृष्ठभूमि में अपडेट हो रहा है।",
+      settingsTitle: "सेटिंग्स और फ़ोल्डर्स",
+      settingsHelp: "होस्ट सिस्टम पर सक्रिय मीडिया फ़ोल्डर ब्राउज़ करें और चुनें।",
+      settingsSaveBtn: "फ़ोल्डर चुनें और सुरक्षित करें",
+      settingsSuccess: "डेटाबेस में मीडिया फ़ोल्डर सफलतापूर्वक अपडेट किया गया!"
     }
   }
 };

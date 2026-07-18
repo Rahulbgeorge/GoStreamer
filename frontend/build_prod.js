@@ -4,6 +4,7 @@ console.log('Loading Node.js Production Build Config...');
 
 // Set the production API base URL env variable
 process.env.VITE_API_BASE = 'https://web-dustin.offlinesys.shop/api/v1';
+// process.env.VITE_API_BASE = "http://localhost:8000/api/v1";
 
 console.log('Building frontend production assets with URL: ' + process.env.VITE_API_BASE);
 

@@ -232,3 +232,117 @@
   font-size: 11px;
   color: var(--text-secondary);
 }
+
+/* Settings Tab & Directory Browser Styles */
+.settings-pane {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  flex-grow: 1;
+}
+
+.settings-help {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+  margin: 0;
+}
+
+.current-path-container {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 8px 12px;
+}
+
+.folder-icon {
+  font-size: 18px;
+}
+
+.path-input {
+  flex-grow: 1;
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  font-size: 14px;
+  outline: none;
+  font-family: inherit;
+}
+
+.btn-browse-refresh {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px;
+  font-size: 14px;
+  border-radius: 4px;
+  transition: var(--transition-fast);
+}
+
+.btn-browse-refresh:hover {
+  background-color: rgba(255, 255, 255, 0.1);
+}
+
+.settings-loading {
+  font-size: 13px;
+  color: var(--warning);
+  padding: 4px 8px;
+}
+
+.directory-browser {
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  max-height: 180px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  margin-top: 4px;
+}
+
+.dir-item {
+  display: flex;
+  align-items: center;
+  padding: 10px 14px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  transition: var(--transition-fast);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+}
+
+.dir-item:last-child {
+  border-bottom: none;
+}
+
+.dir-item:hover {
+  background-color: var(--bg-card-hover);
+}
+
+.parent-dir {
+  color: var(--warning);
+  background-color: rgba(255, 193, 7, 0.03);
+  font-weight: bold;
+}
+
+.folder-dir {
+  color: var(--text-primary);
+}
+
+.no-subdirs {
+  padding: 20px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.btn-save-settings {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+

@@ -43,11 +43,12 @@ func main() {
 
 	// 4. Initialize Dependency Injections
 	mediaRepo := sqlite.NewMediaRepository(db)
+	prefRepo := sqlite.NewPreferenceRepository(db)
 
 	streamService := service.NewStreamService(mediaRepo)
-	scannerService := service.NewScannerService(cfg, mediaRepo)
-	uploadService := service.NewUploadService(cfg, mediaRepo)
-	torrentService, err := service.NewTorrentService(cfg, mediaRepo)
+	scannerService := service.NewScannerService(cfg, mediaRepo, prefRepo)
+	uploadService := service.NewUploadService(cfg, mediaRepo, prefRepo)
+	torrentService, err := service.NewTorrentService(cfg, mediaRepo, prefRepo)
 	if err != nil {
 		slog.Error("Failed to initialize torrent service", "err", err)
 		os.Exit(1)
@@ -55,12 +56,14 @@ func main() {
 	defer torrentService.Close()
 
 	youtubeDownloader := service.NewYoutubeDownloader()
-	youtubeCtrl := controller.NewYoutubeController(cfg, youtubeDownloader, mediaRepo)
+	youtubeCtrl := controller.NewYoutubeController(cfg, youtubeDownloader, mediaRepo, prefRepo)
 
 	mediaCtrl := controller.NewMediaController(mediaRepo, scannerService)
 	streamCtrl := controller.NewStreamController(streamService, cfg)
 	uploadCtrl := controller.NewUploadController(uploadService)
 	torrentCtrl := controller.NewTorrentController(torrentService)
+	prefCtrl := controller.NewPreferenceController(prefRepo)
+	systemCtrl := controller.NewSystemController()
 
 	// 5. Start file auto-discovery services
 	ctx, cancel := context.WithCancel(context.Background())
@@ -73,7 +76,7 @@ func main() {
 	defer scannerService.Stop()
 
 	// 6. Setup Gin Router
-	router := setupRouter(cfg, mediaCtrl, streamCtrl, uploadCtrl, torrentCtrl, youtubeCtrl)
+	router := setupRouter(cfg, mediaCtrl, streamCtrl, uploadCtrl, torrentCtrl, youtubeCtrl, prefCtrl, systemCtrl)
 
 	srv := &http.Server{
 		Addr:    ":" + cfg.ServerPort,

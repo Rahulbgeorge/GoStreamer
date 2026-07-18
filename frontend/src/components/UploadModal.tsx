@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { API_BASE, mediaService } from '../services/mediaService';
-import { TorrentStatus, TorrentTarget } from '../types/media';
+import { TorrentStatus, TorrentTarget, DirectoryItem } from '../types/media';
 import './UploadModal.css';
 
 interface UploadModalProps {
@@ -15,7 +15,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({ onClose, onUploadSucce
   const [progress, setProgress] = useState<number>(0);
   const [status, setStatus] = useState<'idle' | 'uploading' | 'complete' | 'error'>('idle');
 
-  const [activeTab, setActiveTab] = useState<'upload' | 'torrent' | 'scan' | 'youtube'>('upload');
+  const [activeTab, setActiveTab] = useState<'upload' | 'torrent' | 'scan' | 'youtube' | 'settings'>('upload');
   const [magnetUrl, setMagnetUrl] = useState('');
   const [torrentStatus, setTorrentStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [torrentError, setTorrentError] = useState('');
@@ -130,6 +130,133 @@ export const UploadModal: React.FC<UploadModalProps> = ({ onClose, onUploadSucce
       if (pollRef.current) clearInterval(pollRef.current);
     };
   }, []);
+
+  // Settings tab state
+  const [currentPath, setCurrentPath] = useState<string>('');
+  const [parentPath, setParentPath] = useState<string>('');
+  const [directories, setDirectories] = useState<DirectoryItem[]>([]);
+  const [settingsStatus, setSettingsStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+  const [settingsMsg, setSettingsMsg] = useState<string>('');
+
+  // Scan folder browse state
+  const [scanPath, setScanPath] = useState<string>('');
+  const [scanDirectories, setScanDirectories] = useState<DirectoryItem[]>([]);
+  const [scanParentPath, setScanParentPath] = useState<string>('');
+  const [showScanBrowser, setShowScanBrowser] = useState<boolean>(false);
+  const [scanBrowseStatus, setScanBrowseStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+  const [scanBrowseMsg, setScanBrowseMsg] = useState<string>('');
+
+  const fetchSettings = async () => {
+    setSettingsStatus('loading');
+    setSettingsMsg('');
+    try {
+      const prefs = await mediaService.getPreferences();
+      const homedirPref = prefs.find(p => p.key === 'homedir');
+      const startPath = homedirPref ? homedirPref.value : '';
+      
+      const browseData = await mediaService.browseDirectory(startPath || undefined);
+      setCurrentPath(browseData.current_path);
+      setParentPath(browseData.parent_path);
+      setDirectories(browseData.directories || []);
+      setSettingsStatus('idle');
+    } catch (err: any) {
+      setSettingsStatus('error');
+      setSettingsMsg(err.message || 'Failed to fetch settings');
+    }
+  };
+
+  const handleBrowse = async (path: string) => {
+    setSettingsStatus('loading');
+    setSettingsMsg('');
+    try {
+      const browseData = await mediaService.browseDirectory(path);
+      setCurrentPath(browseData.current_path);
+      setParentPath(browseData.parent_path);
+      setDirectories(browseData.directories || []);
+      setSettingsStatus('idle');
+    } catch (err: any) {
+      setSettingsStatus('error');
+      setSettingsMsg(err.message || 'Failed to browse directory');
+    }
+  };
+
+  const handleSaveSettings = async () => {
+    setSettingsStatus('loading');
+    setSettingsMsg('');
+    try {
+      await mediaService.setPreference('homedir', currentPath);
+      setSettingsStatus('success');
+      setSettingsMsg(t('settingsSuccess'));
+      setTimeout(() => {
+        setSettingsStatus('idle');
+      }, 3000);
+    } catch (err: any) {
+      setSettingsStatus('error');
+      setSettingsMsg(err.message || 'Failed to save settings');
+    }
+  };
+
+  const fetchScanPath = async () => {
+    try {
+      const prefs = await mediaService.getPreferences();
+      const homedirPref = prefs.find(p => p.key === 'homedir');
+      const startPath = homedirPref ? homedirPref.value : '';
+      setScanPath(startPath);
+      return startPath;
+    } catch (err) {
+      console.error('Failed to fetch scan path preferences:', err);
+    }
+  };
+
+  const handleBrowseScan = async (path: string) => {
+    setScanBrowseStatus('loading');
+    setScanBrowseMsg('');
+    try {
+      const browseData = await mediaService.browseDirectory(path);
+      setScanPath(browseData.current_path);
+      setScanParentPath(browseData.parent_path);
+      setScanDirectories(browseData.directories || []);
+      setScanBrowseStatus('idle');
+    } catch (err: any) {
+      setScanBrowseStatus('error');
+      setScanBrowseMsg(err.message || 'Failed to browse directory');
+    }
+  };
+
+  const handleSaveScanPath = async (pathToSave?: string) => {
+    const targetPath = pathToSave || scanPath;
+    setScanBrowseStatus('loading');
+    setScanBrowseMsg('');
+    try {
+      await mediaService.setPreference('homedir', targetPath);
+      setScanPath(targetPath);
+      setScanBrowseStatus('success');
+      setScanBrowseMsg(t('settingsSuccess'));
+      setShowScanBrowser(false);
+      setTimeout(() => {
+        setScanBrowseStatus('idle');
+      }, 3000);
+    } catch (err: any) {
+      setScanBrowseStatus('error');
+      setScanBrowseMsg(err.message || 'Failed to save scan folder');
+    }
+  };
+
+  const handleOpenScanBrowser = async () => {
+    const current = await fetchScanPath();
+    if (current !== undefined) {
+      handleBrowseScan(current);
+    }
+    setShowScanBrowser(true);
+  };
+
+  useEffect(() => {
+    if (activeTab === 'settings') {
+      fetchSettings();
+    } else if (activeTab === 'scan') {
+      fetchScanPath();
+    }
+  }, [activeTab]);
 
   const [scannedLinks, setScannedLinks] = useState<TorrentTarget[]>([]);
   const [isScanningUrl, setIsScanningUrl] = useState(false);
@@ -303,6 +430,16 @@ export const UploadModal: React.FC<UploadModalProps> = ({ onClose, onUploadSucce
           >
             YouTube
           </button>
+          <button 
+            className={`tab-btn ${activeTab === 'settings' ? 'active' : ''}`}
+            onClick={() => {
+              setActiveTab('settings');
+              setSettingsStatus('idle');
+              setSettingsMsg('');
+            }}
+          >
+            ⚙️ {t('settingsTitle') || 'Settings'}
+          </button>
         </div>
 
         {activeTab === 'upload' && (
@@ -455,6 +592,172 @@ export const UploadModal: React.FC<UploadModalProps> = ({ onClose, onUploadSucce
             <div className="scan-form" style={{ display: 'flex', flexDirection: 'column', gap: '16px', padding: '16px 0' }}>
               <p>{t('scanHelp')}</p>
               
+              <div className="scan-folder-selection" style={{ background: '#111122', padding: '14px', borderRadius: '8px', border: '1px solid #223', textAlign: 'left' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <span style={{ fontSize: '13px', color: '#888', fontWeight: 'bold' }}>Target Directory to Scan:</span>
+                </div>
+                
+                <div style={{ display: 'flex', gap: '8px', marginBottom: '10px' }}>
+                  <input 
+                    type="text" 
+                    className="path-input" 
+                    value={scanPath || 'Default media folder'} 
+                    onChange={(e) => setScanPath(e.target.value)} 
+                    placeholder="Folder path..."
+                    style={{ 
+                      flex: 1, 
+                      padding: '10px 12px', 
+                      background: '#0a0a16', 
+                      border: '1px solid #334', 
+                      borderRadius: '6px', 
+                      color: '#fff',
+                      fontSize: '14px' 
+                    }}
+                  />
+                  <button 
+                    type="button"
+                    className="btn-upload"
+                    onClick={() => {
+                      if (showScanBrowser) {
+                        setShowScanBrowser(false);
+                      } else {
+                        handleOpenScanBrowser();
+                      }
+                    }}
+                    style={{ 
+                      margin: 0, 
+                      padding: '10px 16px', 
+                      width: 'auto', 
+                      fontSize: '13px', 
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      gap: '6px',
+                      background: 'var(--accent)'
+                    }}
+                  >
+                    📁 {showScanBrowser ? 'Close' : 'Browse Server'}
+                  </button>
+                </div>
+
+                {showScanBrowser && (
+                  <div className="scan-browser-container" style={{ marginTop: '14px', borderTop: '1px solid #223', paddingTop: '14px' }}>
+                    <div style={{ display: 'flex', gap: '8px', marginBottom: '10px' }}>
+                      <input 
+                        type="text" 
+                        className="path-input" 
+                        value={scanPath} 
+                        onChange={(e) => setScanPath(e.target.value)} 
+                        placeholder="Go to folder path..."
+                        style={{ 
+                          flex: 1,
+                          padding: '8px 12px', 
+                          background: '#0a0a16', 
+                          border: '1px solid #334', 
+                          borderRadius: '6px', 
+                          color: '#fff',
+                          fontSize: '13px'
+                        }}
+                      />
+                      <button 
+                        className="btn-browse-refresh"
+                        onClick={() => handleBrowseScan(scanPath)}
+                        style={{ padding: '8px 12px', background: '#223', border: '1px solid #334', borderRadius: '6px', color: '#fff', cursor: 'pointer' }}
+                        title="Browse manually entered path"
+                      >
+                        🔄
+                      </button>
+                    </div>
+
+                    {scanBrowseStatus === 'loading' && (
+                      <div className="settings-loading" style={{ fontSize: '13px', color: '#888', margin: '8px 0' }}>Loading directory...</div>
+                    )}
+
+                    {scanBrowseStatus === 'error' && (
+                      <p className="status-msg error" style={{ margin: '8px 0', fontSize: '13px' }}>{scanBrowseMsg}</p>
+                    )}
+
+                    {scanBrowseStatus === 'success' && (
+                      <p className="status-msg success" style={{ margin: '8px 0', fontSize: '13px' }}>{scanBrowseMsg}</p>
+                    )}
+
+                    <div className="directory-browser" style={{ maxHeight: '200px', overflowY: 'auto', background: '#0a0a16', borderRadius: '6px', border: '1px solid #223', marginBottom: '12px' }}>
+                      {scanParentPath && (
+                        <div 
+                          className="dir-item parent-dir" 
+                          onClick={() => handleBrowseScan(scanParentPath)} 
+                          style={{ padding: '10px 14px', cursor: 'pointer', display: 'flex', alignItems: 'center', background: 'rgba(255, 193, 7, 0.03)', borderBottom: '1px solid #223' }}
+                        >
+                          <span style={{ color: 'var(--warning, #ffc107)', fontWeight: 'bold' }}>⬆️ .. (Go Up)</span>
+                        </div>
+                      )}
+
+                      <div className="dir-list">
+                        {scanDirectories.length === 0 ? (
+                          <div className="no-subdirs" style={{ padding: '16px', color: '#666', fontSize: '13px', textAlign: 'center' }}>No subdirectories found</div>
+                        ) : (
+                          scanDirectories.map((dir) => (
+                            <div 
+                              key={dir.path} 
+                              className="dir-item folder-dir" 
+                              style={{ 
+                                display: 'flex', 
+                                justifyContent: 'space-between', 
+                                alignItems: 'center', 
+                                padding: '10px 14px', 
+                                borderBottom: '1px solid rgba(255, 255, 255, 0.03)'
+                              }}
+                            >
+                              <span 
+                                className="dir-name"
+                                onClick={() => handleBrowseScan(dir.path)}
+                                style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '8px', color: '#fff', cursor: 'pointer' }}
+                              >
+                                📁 {dir.name}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => handleSaveScanPath(dir.path)}
+                                style={{ 
+                                  background: 'rgba(255, 166, 0, 0.1)', 
+                                  border: '1px solid rgba(255, 166, 0, 0.3)', 
+                                  color: '#ffa600', 
+                                  borderRadius: '4px', 
+                                  padding: '4px 10px', 
+                                  fontSize: '11px', 
+                                  cursor: 'pointer',
+                                  fontWeight: 'bold'
+                                }}
+                              >
+                                Select
+                              </button>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <button 
+                        className="btn-upload" 
+                        onClick={() => handleSaveScanPath(scanPath)}
+                        disabled={scanBrowseStatus === 'loading' || !scanPath.trim()}
+                        style={{ padding: '8px 14px', width: 'auto', fontSize: '12px' }}
+                      >
+                        💾 Use Current Folder
+                      </button>
+                      <button 
+                        type="button" 
+                        className="btn-close" 
+                        onClick={() => setShowScanBrowser(false)}
+                        style={{ padding: '8px 14px', fontSize: '12px', background: '#223', color: '#ccc', border: '1px solid #334', alignSelf: 'center', margin: 0 }}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
               {scanStatus === 'idle' && (
                 <button className="btn-upload" onClick={handleScanDirectory}>
                   🔍 {t('scanBtn')}
@@ -585,6 +888,75 @@ export const UploadModal: React.FC<UploadModalProps> = ({ onClose, onUploadSucce
                 </div>
               </div>
             )}
+          </div>
+        )}
+
+        {activeTab === 'settings' && (
+          <div className="tab-pane settings-pane">
+            <p className="settings-help">{t('settingsHelp')}</p>
+            
+            <div className="current-path-container">
+              <span className="folder-icon">📁</span>
+              <input 
+                type="text" 
+                className="path-input" 
+                value={currentPath} 
+                onChange={(e) => setCurrentPath(e.target.value)} 
+                placeholder="Folder path..."
+              />
+              <button 
+                className="btn-browse-refresh"
+                onClick={() => handleBrowse(currentPath)}
+                title="Browse manually entered path"
+              >
+                🔄
+              </button>
+            </div>
+
+            {settingsStatus === 'loading' && (
+              <div className="settings-loading">Loading directory...</div>
+            )}
+
+            {settingsStatus === 'error' && (
+              <p className="status-msg error" style={{ margin: '8px 0' }}>{settingsMsg}</p>
+            )}
+
+            {settingsStatus === 'success' && (
+              <p className="status-msg success" style={{ margin: '8px 0' }}>{settingsMsg}</p>
+            )}
+
+            <div className="directory-browser">
+              {parentPath && (
+                <div className="dir-item parent-dir" onClick={() => handleBrowse(parentPath)}>
+                  <span>⬆️ .. (Go Up)</span>
+                </div>
+              )}
+
+              <div className="dir-list">
+                {directories.length === 0 ? (
+                  <div className="no-subdirs">No subdirectories found</div>
+                ) : (
+                  directories.map((dir) => (
+                    <div 
+                      key={dir.path} 
+                      className="dir-item folder-dir" 
+                      onClick={() => handleBrowse(dir.path)}
+                    >
+                      <span className="dir-name">📁 {dir.name}</span>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            <button 
+              className="btn-upload btn-save-settings" 
+              onClick={handleSaveSettings}
+              disabled={settingsStatus === 'loading' || !currentPath.trim()}
+              style={{ marginTop: '15px' }}
+            >
+              💾 {t('settingsSaveBtn') || 'Save Folder'}
+            </button>
           </div>
         )}
 

@@ -45,6 +45,21 @@ func setupDatabase(cfg *config.Config) (*sql.DB, error) {
 		}
 	}
 
+	// Try to read the preferences migration as well
+	preferencesMigrationPaths := []string{
+		"migrations/003_create_preferences.sql",
+		"../../migrations/003_create_preferences.sql",
+		"../migrations/003_create_preferences.sql",
+		"backend/migrations/003_create_preferences.sql",
+	}
+	var preferencesMigrationSQL []byte
+	for _, path := range preferencesMigrationPaths {
+		preferencesMigrationSQL, _ = os.ReadFile(path)
+		if preferencesMigrationSQL != nil {
+			break
+		}
+	}
+
 	db, err := sqlite.Connect(cfg.DatabasePath, string(migrationSQL))
 	if err != nil {
 		return nil, err
@@ -54,6 +69,12 @@ func setupDatabase(cfg *config.Config) (*sql.DB, error) {
 	if len(genreMigrationSQL) > 0 {
 		if _, migErr := db.Exec(string(genreMigrationSQL)); migErr != nil {
 			slog.Debug("Genre migration skipped (likely already applied)", "err", migErr)
+		}
+	}
+
+	if len(preferencesMigrationSQL) > 0 {
+		if _, migErr := db.Exec(string(preferencesMigrationSQL)); migErr != nil {
+			slog.Debug("Preferences migration skipped (likely already applied)", "err", migErr)
 		}
 	}
 

@@ -58,17 +58,19 @@ type activeTorrent struct {
 }
 
 type torrentService struct {
-	config *config.Config
-	repo   repository.MediaRepository
-	mu     sync.Mutex
-	active map[string]*activeTorrent // keyed by media ID
+	config   *config.Config
+	repo     repository.MediaRepository
+	prefRepo repository.PreferenceRepository
+	mu       sync.Mutex
+	active   map[string]*activeTorrent // keyed by media ID
 }
 
-func NewTorrentService(cfg *config.Config, repo repository.MediaRepository) (TorrentService, error) {
+func NewTorrentService(cfg *config.Config, repo repository.MediaRepository, prefRepo repository.PreferenceRepository) (TorrentService, error) {
 	s := &torrentService{
-		config: cfg,
-		repo:   repo,
-		active: make(map[string]*activeTorrent),
+		config:   cfg,
+		repo:     repo,
+		prefRepo: prefRepo,
+		active:   make(map[string]*activeTorrent),
 	}
 
 	// Verify transmission-remote is available on the system
@@ -79,6 +81,14 @@ func NewTorrentService(cfg *config.Config, repo repository.MediaRepository) (Tor
 	go s.resumeActiveTorrents()
 
 	return s, nil
+}
+
+func (s *torrentService) getMediaDir() string {
+	pref, err := s.prefRepo.Get("homedir")
+	if err == nil && pref != nil && pref.Value != "" {
+		return pref.Value
+	}
+	return s.config.MediaDir
 }
 
 func (s *torrentService) Close() {
@@ -371,7 +381,7 @@ func (s *torrentService) trackTorrentDownload(ctx context.Context, mediaID strin
 						if job.ProgressPct >= 100.0 {
 							slog.Info("Torrent download complete, moving file", "title", m.Title)
 
-							destPath := getUniqueFilePath(s.config.MediaDir, m.OriginalName)
+							destPath := getUniqueFilePath(s.getMediaDir(), m.OriginalName)
 							err := moveFile(m.FilePath, destPath)
 							if err != nil {
 								slog.Error("Failed to move completed torrent file", "err", err)

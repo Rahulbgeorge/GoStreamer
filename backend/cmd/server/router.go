@@ -24,6 +24,8 @@ func setupRouter(
 	uploadCtrl *controller.UploadController,
 	torrentCtrl *controller.TorrentController,
 	youtubeCtrl *controller.YoutubeController,
+	prefCtrl *controller.PreferenceController,
+	systemCtrl *controller.SystemController,
 ) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()
@@ -40,6 +42,15 @@ func setupRouter(
 	api.GET("/media/stats", mediaCtrl.GetLibraryStats)
 	api.GET("/media/search", mediaCtrl.SearchMedia)
 	api.POST("/media/scan", mediaCtrl.ScanMedia)
+
+	// Preferences Routes
+	api.GET("/preferences", prefCtrl.GetAllPreferences)
+	api.GET("/preferences/:key", prefCtrl.GetPreference)
+	api.POST("/preferences", prefCtrl.SetPreference)
+	api.DELETE("/preferences/:key", prefCtrl.DeletePreference)
+
+	// System Routes
+	api.GET("/system/browse", systemCtrl.BrowseDirectory)
 
 	// Stream Routes
 	api.GET("/stream/:id", streamCtrl.StreamVideo)

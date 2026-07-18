@@ -34,16 +34,26 @@ type UploadService interface {
 type uploadService struct {
 	config   *config.Config
 	repo     repository.MediaRepository
+	prefRepo repository.PreferenceRepository
 	sessions map[string]*UploadSession
 	mu       sync.RWMutex
 }
 
-func NewUploadService(cfg *config.Config, repo repository.MediaRepository) UploadService {
+func NewUploadService(cfg *config.Config, repo repository.MediaRepository, prefRepo repository.PreferenceRepository) UploadService {
 	return &uploadService{
 		config:   cfg,
 		repo:     repo,
+		prefRepo: prefRepo,
 		sessions: make(map[string]*UploadSession),
 	}
+}
+
+func (s *uploadService) getMediaDir() string {
+	pref, err := s.prefRepo.Get("homedir")
+	if err == nil && pref != nil && pref.Value != "" {
+		return pref.Value
+	}
+	return s.config.MediaDir
 }
 
 func (s *uploadService) InitUpload(filename string, totalSize int64) (string, error) {
@@ -130,7 +140,7 @@ func (s *uploadService) CompleteUpload(ctx context.Context, uploadID string) (*m
 	}
 
 	// Create a unique destination file path in MediaDir
-	destPath := getUniqueFilePath(s.config.MediaDir, session.Filename)
+	destPath := getUniqueFilePath(s.getMediaDir(), session.Filename)
 	destFile, err := os.Create(destPath)
 	if err != nil {
 		return nil, fmt.Errorf("create destination file: %w", err)

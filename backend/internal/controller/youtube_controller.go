@@ -22,14 +22,24 @@ type YoutubeController struct {
 	cfg        *config.Config
 	downloader service.YoutubeDownloader
 	repo       repository.MediaRepository
+	prefRepo   repository.PreferenceRepository
 }
 
-func NewYoutubeController(cfg *config.Config, downloader service.YoutubeDownloader, repo repository.MediaRepository) *YoutubeController {
+func NewYoutubeController(cfg *config.Config, downloader service.YoutubeDownloader, repo repository.MediaRepository, prefRepo repository.PreferenceRepository) *YoutubeController {
 	return &YoutubeController{
 		cfg:        cfg,
 		downloader: downloader,
 		repo:       repo,
+		prefRepo:   prefRepo,
 	}
+}
+
+func (ctrl *YoutubeController) getMediaDir() string {
+	pref, err := ctrl.prefRepo.Get("homedir")
+	if err == nil && pref != nil && pref.Value != "" {
+		return pref.Value
+	}
+	return ctrl.cfg.MediaDir
 }
 
 func (ctrl *YoutubeController) ListFormats(c *gin.Context) {
@@ -112,7 +122,7 @@ func (ctrl *YoutubeController) DownloadVideo(c *gin.Context) {
 	filename := cleanTitle + ".mp4"
 
 	// Create a unique path in MediaDir
-	destPath := filepath.Join(ctrl.cfg.MediaDir, filename)
+	destPath := filepath.Join(ctrl.getMediaDir(), filename)
 	base := filepath.Base(destPath)
 	ext := filepath.Ext(base)
 	name := strings.TrimSuffix(base, ext)
@@ -121,7 +131,7 @@ func (ctrl *YoutubeController) DownloadVideo(c *gin.Context) {
 		if _, err := os.Stat(destPath); os.IsNotExist(err) {
 			break
 		}
-		destPath = filepath.Join(ctrl.cfg.MediaDir, fmt.Sprintf("%s_%d%s", name, counter, ext))
+		destPath = filepath.Join(ctrl.getMediaDir(), fmt.Sprintf("%s_%d%s", name, counter, ext))
 		counter++
 	}
 	filename = filepath.Base(destPath)

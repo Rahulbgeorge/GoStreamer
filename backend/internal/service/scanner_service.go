@@ -27,20 +27,31 @@ type ScannerService interface {
 }
 
 type scannerService struct {
-	config   *config.Config
-	repo     repository.MediaRepository
-	watcher  *fsnotify.Watcher
-	mu       sync.Mutex
-	running  bool
-	stopChan chan struct{}
+	config            *config.Config
+	repo              repository.MediaRepository
+	prefRepo          repository.PreferenceRepository
+	watcher           *fsnotify.Watcher
+	currentWatchedDir string
+	mu                sync.Mutex
+	running           bool
+	stopChan          chan struct{}
 }
 
-func NewScannerService(cfg *config.Config, repo repository.MediaRepository) ScannerService {
+func NewScannerService(cfg *config.Config, repo repository.MediaRepository, prefRepo repository.PreferenceRepository) ScannerService {
 	return &scannerService{
 		config:   cfg,
 		repo:     repo,
+		prefRepo: prefRepo,
 		stopChan: make(chan struct{}),
 	}
+}
+
+func (s *scannerService) getMediaDir() string {
+	pref, err := s.prefRepo.Get("homedir")
+	if err == nil && pref != nil && pref.Value != "" {
+		return pref.Value
+	}
+	return s.config.MediaDir
 }
 
 // Start kicks off both fsnotify real-time watching and the periodic directory scanning.
@@ -53,8 +64,11 @@ func (s *scannerService) Start(ctx context.Context) error {
 	s.running = true
 	s.mu.Unlock()
 
+	mediaDir := s.getMediaDir()
+	s.currentWatchedDir = mediaDir
+
 	// Ensure media directory and thumbnail directory exist
-	if err := os.MkdirAll(s.config.MediaDir, 0755); err != nil {
+	if err := os.MkdirAll(mediaDir, 0755); err != nil {
 		return fmt.Errorf("create media dir: %w", err)
 	}
 	if err := os.MkdirAll(s.config.ThumbnailDir, 0755); err != nil {
@@ -68,7 +82,7 @@ func (s *scannerService) Start(ctx context.Context) error {
 	} else {
 		s.watcher = watcher
 		// Watch media directory recursively
-		s.watchDirRecursive(s.config.MediaDir)
+		s.watchDirRecursive(mediaDir)
 		go s.watchLoop(ctx)
 	}
 
@@ -170,8 +184,35 @@ func (s *scannerService) scanLoop(ctx context.Context) {
 func (s *scannerService) ScanDirectory(ctx context.Context) {
 	slog.Info("Starting folder scanning...")
 
+	mediaDir := s.getMediaDir()
+
+	// Ensure media directory exists
+	if err := os.MkdirAll(mediaDir, 0755); err != nil {
+		slog.Error("Failed to create/verify media directory", "dir", mediaDir, "err", err)
+		return
+	}
+
+	// Re-register watcher if directory path changed
+	if s.watcher != nil {
+		s.mu.Lock()
+		if s.currentWatchedDir != mediaDir {
+			slog.Info("Media directory changed, updating fsnotify watcher", "old", s.currentWatchedDir, "new", mediaDir)
+			s.watcher.Close()
+			watcher, err := fsnotify.NewWatcher()
+			if err == nil {
+				s.watcher = watcher
+				s.currentWatchedDir = mediaDir
+				s.watchDirRecursive(mediaDir)
+				go s.watchLoop(ctx)
+			} else {
+				slog.Error("Failed to recreate fsnotify watcher", "err", err)
+			}
+		}
+		s.mu.Unlock()
+	}
+
 	// 1. Scan directory and ingest newly found files
-	err := filepath.WalkDir(s.config.MediaDir, func(path string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(mediaDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -184,7 +225,7 @@ func (s *scannerService) ScanDirectory(ctx context.Context) {
 		return nil
 	})
 	if err != nil {
-		slog.Error("WalkDir failed during file scanning", "dir", s.config.MediaDir, "err", err)
+		slog.Error("WalkDir failed during file scanning", "dir", mediaDir, "err", err)
 	}
 
 	// 2. Clean up database records for files that no longer exist on disk
