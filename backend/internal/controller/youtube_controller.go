@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -8,7 +9,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -19,27 +19,38 @@ import (
 )
 
 type YoutubeController struct {
-	cfg        *config.Config
-	downloader service.YoutubeDownloader
-	repo       repository.MediaRepository
-	prefRepo   repository.PreferenceRepository
+	cfg            *config.Config
+	downloader     service.YoutubeDownloader
+	repo           repository.MediaRepository
+	prefRepo       repository.PreferenceRepository
+	downloadRepo   repository.DownloadRepository
+	scannerService service.ScannerService
 }
 
-func NewYoutubeController(cfg *config.Config, downloader service.YoutubeDownloader, repo repository.MediaRepository, prefRepo repository.PreferenceRepository) *YoutubeController {
+func NewYoutubeController(
+	cfg *config.Config,
+	downloader service.YoutubeDownloader,
+	repo repository.MediaRepository,
+	prefRepo repository.PreferenceRepository,
+	downloadRepo repository.DownloadRepository,
+	scannerService service.ScannerService,
+) *YoutubeController {
 	return &YoutubeController{
-		cfg:        cfg,
-		downloader: downloader,
-		repo:       repo,
-		prefRepo:   prefRepo,
+		cfg:            cfg,
+		downloader:     downloader,
+		repo:           repo,
+		prefRepo:       prefRepo,
+		downloadRepo:   downloadRepo,
+		scannerService: scannerService,
 	}
 }
 
-func (ctrl *YoutubeController) getMediaDir() string {
+func (ctrl *YoutubeController) getYoutubeDir() string {
 	pref, err := ctrl.prefRepo.Get("homedir")
 	if err == nil && pref != nil && pref.Value != "" {
 		return pref.Value
 	}
-	return ctrl.cfg.MediaDir
+	return ctrl.cfg.YoutubeDownloadDir
 }
 
 func (ctrl *YoutubeController) ListFormats(c *gin.Context) {
@@ -121,8 +132,14 @@ func (ctrl *YoutubeController) DownloadVideo(c *gin.Context) {
 	}
 	filename := cleanTitle + ".mp4"
 
-	// Create a unique path in MediaDir
-	destPath := filepath.Join(ctrl.getMediaDir(), filename)
+	// Create a unique path in getYoutubeDir
+	destDir := ctrl.getYoutubeDir()
+	if err := os.MkdirAll(destDir, 0755); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create destination folder: " + err.Error()})
+		return
+	}
+
+	destPath := filepath.Join(destDir, filename)
 	base := filepath.Base(destPath)
 	ext := filepath.Ext(base)
 	name := strings.TrimSuffix(base, ext)
@@ -131,66 +148,56 @@ func (ctrl *YoutubeController) DownloadVideo(c *gin.Context) {
 		if _, err := os.Stat(destPath); os.IsNotExist(err) {
 			break
 		}
-		destPath = filepath.Join(ctrl.getMediaDir(), fmt.Sprintf("%s_%d%s", name, counter, ext))
+		destPath = filepath.Join(destDir, fmt.Sprintf("%s_%d%s", name, counter, ext))
 		counter++
 	}
 	filename = filepath.Base(destPath)
 
-	mediaID := uuid.New().String()
+	downloadID := uuid.New().String()
 
-	// 2. Insert record as Downloading in the DB
-	m := &model.Media{
-		ID:            mediaID,
+	// 2. Insert record as Downloading in the unified downloads DB
+	dl := &model.Download{
+		ID:            downloadID,
 		Title:         title,
-		OriginalName:  filename,
-		Year:          time.Now().Year(),
-		Quality:       "Pending",
-		FilePath:      destPath,
-		FileSize:      0,
-		Duration:      0,
-		MimeType:      "video/mp4",
-		ThumbnailPath: "",
-		Status:        model.StatusDownloading,
-		Source:        model.SourceYoutube,
-		Language:      "en",
+		Status:        model.DownloadStatusDownloading,
+		Type:          model.DownloadTypeYoutube,
+		Progress:      0,
+		TotalSize:     0,
+		CompletedSize: 0,
+		DestPath:      destPath,
 	}
 
-	if err := m.Validate(); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to validate media model: " + err.Error()})
-		return
-	}
-
-	if err := ctrl.repo.Create(m); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create media record: " + err.Error()})
+	if err := ctrl.downloadRepo.Create(dl); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create download record: " + err.Error()})
 		return
 	}
 
 	// 3. Start background download
 	go func() {
-		slog.Info("Starting youtube adaptive download", "media_id", mediaID, "url", url, "videoItag", videoItag, "audioItag", audioItag)
-		err := ctrl.downloader.DownloadAdaptive(url, videoItag, audioItag, destPath)
+		slog.Info("Starting youtube adaptive download", "download_id", downloadID, "url", url, "videoItag", videoItag, "audioItag", audioItag)
+		err := ctrl.downloader.DownloadAdaptive(context.Background(), downloadID, url, videoItag, audioItag, destPath)
 		if err != nil {
-			slog.Error("youtube download failed", "media_id", mediaID, "err", err)
-			m.Status = model.StatusError
-			_ = ctrl.repo.Update(m)
+			slog.Error("youtube download failed", "download_id", downloadID, "err", err)
+			dl.Status = model.DownloadStatusFailed
+			_ = ctrl.downloadRepo.Update(dl)
 			return
 		}
 
-		// Update database with size
+		dl.Status = model.DownloadStatusCompleted
+		dl.Progress = 100.0
 		info, statErr := os.Stat(destPath)
 		if statErr == nil {
-			m.FileSize = info.Size()
+			dl.TotalSize = info.Size()
+			dl.CompletedSize = info.Size()
 		}
+		_ = ctrl.downloadRepo.Update(dl)
 
-		m.Status = model.StatusProcessing
-		_ = ctrl.repo.Update(m)
-
-		// Start probe and thumbnail extraction
-		service.ProcessMediaBackground(ctrl.cfg, ctrl.repo, mediaID, destPath)
+		slog.Info("YouTube download complete, triggering directory scan", "title", dl.Title)
+		go ctrl.scannerService.ScanDirectory(context.Background())
 	}()
 
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Download started in background",
-		"data":    m,
+		"data":    dl,
 	})
 }

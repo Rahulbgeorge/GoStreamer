@@ -10,7 +10,7 @@ import (
 
 func main() {
 	// Create a new downloader instance
-	downloader := service.NewYoutubeDownloader()
+	downloader := service.NewYoutubeDownloader(nil, nil, nil, nil)
 
 	// A short public test video on YouTube
 	testURL := "https://www.youtube.com/watch?v=aqz-KE-bpKQ" // Big Buck Bunny trailer or similar short video

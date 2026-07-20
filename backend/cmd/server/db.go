@@ -60,6 +60,21 @@ func setupDatabase(cfg *config.Config) (*sql.DB, error) {
 		}
 	}
 
+	// Try to read the downloads migration as well
+	downloadsMigrationPaths := []string{
+		"migrations/004_create_downloads.sql",
+		"../../migrations/004_create_downloads.sql",
+		"../migrations/004_create_downloads.sql",
+		"backend/migrations/004_create_downloads.sql",
+	}
+	var downloadsMigrationSQL []byte
+	for _, path := range downloadsMigrationPaths {
+		downloadsMigrationSQL, _ = os.ReadFile(path)
+		if downloadsMigrationSQL != nil {
+			break
+		}
+	}
+
 	db, err := sqlite.Connect(cfg.DatabasePath, string(migrationSQL))
 	if err != nil {
 		return nil, err
@@ -75,6 +90,12 @@ func setupDatabase(cfg *config.Config) (*sql.DB, error) {
 	if len(preferencesMigrationSQL) > 0 {
 		if _, migErr := db.Exec(string(preferencesMigrationSQL)); migErr != nil {
 			slog.Debug("Preferences migration skipped (likely already applied)", "err", migErr)
+		}
+	}
+
+	if len(downloadsMigrationSQL) > 0 {
+		if _, migErr := db.Exec(string(downloadsMigrationSQL)); migErr != nil {
+			slog.Debug("Downloads migration skipped (likely already applied)", "err", migErr)
 		}
 	}
 

@@ -1,14 +1,19 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
+	"time"
 
 	"github.com/kkdai/youtube/v2"
+	"streamingplayer/internal/config"
+	"streamingplayer/internal/repository"
 )
 
 // Downloader interface for external clients to use
@@ -16,16 +21,29 @@ type YoutubeDownloader interface {
 	Download(downloadOptions DownloadOptions) (string, error)
 	ListQuality(videoUrl string) (map[string]int, error)
 	ListFormats(videoUrl string) ([]youtube.Format, string, error)
-	DownloadAdaptive(url string, videoItag, audioItag int, destPath string) error
+	DownloadAdaptive(ctx context.Context, downloadID string, url string, videoItag, audioItag int, destPath string) error
 }
 
 type YoutubeDownloaderImpl struct {
-	client *youtube.Client
+	client         *youtube.Client
+	cfg            *config.Config
+	downloadRepo   repository.DownloadRepository
+	prefRepo       repository.PreferenceRepository
+	scannerService ScannerService
 }
 
-func NewYoutubeDownloader() *YoutubeDownloaderImpl {
+func NewYoutubeDownloader(
+	cfg *config.Config,
+	downloadRepo repository.DownloadRepository,
+	prefRepo repository.PreferenceRepository,
+	scannerService ScannerService,
+) *YoutubeDownloaderImpl {
 	return &YoutubeDownloaderImpl{
-		client: &youtube.Client{},
+		client:         &youtube.Client{},
+		cfg:            cfg,
+		downloadRepo:   downloadRepo,
+		prefRepo:       prefRepo,
+		scannerService: scannerService,
 	}
 }
 
@@ -36,7 +54,6 @@ type DownloadOptions struct {
 }
 
 func (y *YoutubeDownloaderImpl) Download(downloadOptions DownloadOptions) (string, error) {
-	// code for downloading required quality
 	video, err := y.client.GetVideo(downloadOptions.VideoUrl)
 	if err != nil {
 		return "", err
@@ -49,10 +66,8 @@ func (y *YoutubeDownloaderImpl) Download(downloadOptions DownloadOptions) (strin
 
 	formats := video.Formats.Itag(itag)
 	if len(formats) == 0 {
-		// Fallback to 18 (360p) which is widely available
 		formats = video.Formats.Itag(18)
 		if len(formats) == 0 && len(video.Formats) > 0 {
-			// Fallback to the first available format
 			formats = []youtube.Format{video.Formats[0]}
 		}
 	}
@@ -105,7 +120,67 @@ func (y *YoutubeDownloaderImpl) ListFormats(videoUrl string) ([]youtube.Format, 
 	return video.Formats, video.Title, nil
 }
 
-func (y *YoutubeDownloaderImpl) DownloadAdaptive(url string, videoItag, audioItag int, destPath string) error {
+type progressTracker struct {
+	mu           sync.Mutex
+	downloadID   string
+	totalBytes   int64
+	writtenBytes int64
+	lastUpdate   time.Time
+	updateFreq   time.Duration
+	downloadRepo repository.DownloadRepository
+}
+
+func (t *progressTracker) AddProgress(n int64) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.writtenBytes += n
+
+	now := time.Now()
+	if now.Sub(t.lastUpdate) >= t.updateFreq || t.writtenBytes >= t.totalBytes {
+		t.lastUpdate = now
+		var progress float64
+		if t.totalBytes > 0 {
+			progress = float64(t.writtenBytes) / float64(t.totalBytes) * 100.0
+			if progress > 100.0 {
+				progress = 100.0
+			}
+		}
+
+		dl, err := t.downloadRepo.FindByID(t.downloadID)
+		if err == nil && dl != nil {
+			dl.Progress = progress
+			dl.CompletedSize = t.writtenBytes
+			dl.TotalSize = t.totalBytes
+
+			durationSecs := now.Sub(dl.CreatedAt).Seconds()
+			if durationSecs > 0 {
+				dl.DownloadSpeed = float64(t.writtenBytes) / durationSecs
+				remainingBytes := t.totalBytes - t.writtenBytes
+				if dl.DownloadSpeed > 0 && remainingBytes > 0 {
+					etaSecs := int64(float64(remainingBytes) / dl.DownloadSpeed)
+					dl.ETA = fmt.Sprintf("%ds", etaSecs)
+				}
+			}
+
+			_ = t.downloadRepo.Update(dl)
+		}
+	}
+}
+
+type progressWriter struct {
+	writer  io.Writer
+	tracker *progressTracker
+}
+
+func (pw *progressWriter) Write(p []byte) (int, error) {
+	n, err := pw.writer.Write(p)
+	if n > 0 {
+		pw.tracker.AddProgress(int64(n))
+	}
+	return n, err
+}
+
+func (y *YoutubeDownloaderImpl) DownloadAdaptive(ctx context.Context, downloadID string, url string, videoItag, audioItag int, destPath string) error {
 	video, err := y.client.GetVideo(url)
 	if err != nil {
 		return err
@@ -123,7 +198,6 @@ func (y *YoutubeDownloaderImpl) DownloadAdaptive(url string, videoItag, audioIta
 	}
 
 	if videoFormat == nil {
-		// Fallback chain: 1080p, 720p, 480p, 360p, 240p, 144p
 		targets := []int{1080, 720, 480, 360, 240, 144}
 		for _, targetHeight := range targets {
 			for _, f := range video.Formats {
@@ -138,7 +212,6 @@ func (y *YoutubeDownloaderImpl) DownloadAdaptive(url string, videoItag, audioIta
 		}
 	}
 
-	// If still nil, pick the first video format (or first overall)
 	if videoFormat == nil {
 		for _, f := range video.Formats {
 			if f.Height > 0 {
@@ -163,7 +236,6 @@ func (y *YoutubeDownloaderImpl) DownloadAdaptive(url string, videoItag, audioIta
 	}
 
 	if audioFormat == nil {
-		// Find best audio-only format based on highest Bitrate
 		var bestAudio *youtube.Format
 		for i := range video.Formats {
 			f := &video.Formats[i]
@@ -176,47 +248,90 @@ func (y *YoutubeDownloaderImpl) DownloadAdaptive(url string, videoItag, audioIta
 		audioFormat = bestAudio
 	}
 
-	// If no audio-only format is found, check if videoFormat already has audio
+	// If no audio-only format is found
 	if audioFormat == nil {
-		return y.downloadStream(video, videoFormat, destPath)
+		totalBytes := videoFormat.ContentLength
+		tracker := &progressTracker{
+			downloadID:   downloadID,
+			totalBytes:   totalBytes,
+			lastUpdate:   time.Now(),
+			updateFreq:   time.Duration(y.cfg.DownloadUpdateInterval) * time.Second,
+			downloadRepo: y.downloadRepo,
+		}
+
+		tempPath := filepath.Join(y.cfg.DownloadDir, fmt.Sprintf("yt_temp_%s.mp4.part", downloadID))
+		if err := y.downloadStreamWithTracker(video, videoFormat, tempPath, tracker); err != nil {
+			return err
+		}
+
+		if err := moveFile(tempPath, destPath); err != nil {
+			return err
+		}
+
+		return nil
 	}
 
-	// Create a temp directory for separate files
-	tmpDir, err := os.MkdirTemp("", "yt_adaptive_*")
-	if err != nil {
-		return err
-	}
-	defer os.RemoveAll(tmpDir)
-
-	videoTemp := filepath.Join(tmpDir, "video.tmp")
-	audioTemp := filepath.Join(tmpDir, "audio.tmp")
-
-	// Download video stream
-	if err := y.downloadStream(video, videoFormat, videoTemp); err != nil {
-		return err
+	totalBytes := videoFormat.ContentLength + audioFormat.ContentLength
+	tracker := &progressTracker{
+		downloadID:   downloadID,
+		totalBytes:   totalBytes,
+		lastUpdate:   time.Now(),
+		updateFreq:   time.Duration(y.cfg.DownloadUpdateInterval) * time.Second,
+		downloadRepo: y.downloadRepo,
 	}
 
-	// Download audio stream
-	if err := y.downloadStream(video, audioFormat, audioTemp); err != nil {
-		return err
+	videoTemp := filepath.Join(y.cfg.DownloadDir, fmt.Sprintf("video_temp_%s.tmp.part", downloadID))
+	audioTemp := filepath.Join(y.cfg.DownloadDir, fmt.Sprintf("audio_temp_%s.tmp.part", downloadID))
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	var videoErr, audioErr error
+
+	go func() {
+		defer wg.Done()
+		videoErr = y.downloadStreamWithTracker(video, videoFormat, videoTemp, tracker)
+	}()
+
+	go func() {
+		defer wg.Done()
+		audioErr = y.downloadStreamWithTracker(video, audioFormat, audioTemp, tracker)
+	}()
+
+	wg.Wait()
+
+	if videoErr != nil {
+		return fmt.Errorf("video download error: %w", videoErr)
+	}
+	if audioErr != nil {
+		return fmt.Errorf("audio download error: %w", audioErr)
 	}
 
-	// Merge video and audio with ffmpeg
-	cmd := exec.Command("ffmpeg", "-y", "-i", videoTemp, "-i", audioTemp, "-c", "copy", destPath)
+	tempMergePath := destPath + ".part"
+	cmd := exec.Command("ffmpeg", "-y", "-i", videoTemp, "-i", audioTemp, "-c", "copy", tempMergePath)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		// Fallback: copy video and transcode audio to aac
-		cmdFallback := exec.Command("ffmpeg", "-y", "-i", videoTemp, "-i", audioTemp, "-c:v", "copy", "-c:a", "aac", destPath)
+		cmdFallback := exec.Command("ffmpeg", "-y", "-i", videoTemp, "-i", audioTemp, "-c:v", "copy", "-c:a", "aac", tempMergePath)
 		outputFallback, errFallback := cmdFallback.CombinedOutput()
 		if errFallback != nil {
+			_ = os.Remove(videoTemp)
+			_ = os.Remove(audioTemp)
+			_ = os.Remove(tempMergePath)
 			return fmt.Errorf("ffmpeg merge failed: %v. Output: %s. Fallback Output: %s", err, string(output), string(outputFallback))
 		}
+	}
+
+	_ = os.Remove(videoTemp)
+	_ = os.Remove(audioTemp)
+
+	if err := os.Rename(tempMergePath, destPath); err != nil {
+		return fmt.Errorf("failed to finalize merged video: %w", err)
 	}
 
 	return nil
 }
 
-func (y *YoutubeDownloaderImpl) downloadStream(video *youtube.Video, format *youtube.Format, path string) error {
+func (y *YoutubeDownloaderImpl) downloadStreamWithTracker(video *youtube.Video, format *youtube.Format, path string, tracker *progressTracker) error {
 	stream, _, err := y.client.GetStream(video, format)
 	if err != nil {
 		return err
@@ -229,7 +344,11 @@ func (y *YoutubeDownloaderImpl) downloadStream(video *youtube.Video, format *you
 	}
 	defer out.Close()
 
-	_, err = io.Copy(out, stream)
+	pw := &progressWriter{
+		writer:  out,
+		tracker: tracker,
+	}
+
+	_, err = io.Copy(pw, stream)
 	return err
 }
-

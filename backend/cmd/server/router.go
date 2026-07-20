@@ -26,6 +26,7 @@ func setupRouter(
 	youtubeCtrl *controller.YoutubeController,
 	prefCtrl *controller.PreferenceController,
 	systemCtrl *controller.SystemController,
+	downloadCtrl *controller.DownloadController,
 ) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()
@@ -62,6 +63,11 @@ func setupRouter(
 	api.POST("/upload/init", uploadCtrl.InitUpload)
 	api.POST("/upload/:id/chunk", uploadCtrl.UploadChunk)
 	api.POST("/upload/:id/complete", uploadCtrl.CompleteUpload)
+
+	// Download Routes (Unified)
+	api.GET("/downloads", downloadCtrl.ListDownloads)
+	api.GET("/downloads/:id", downloadCtrl.GetDownload)
+	api.DELETE("/downloads/:id", downloadCtrl.DeleteDownload)
 
 	// Torrent Routes
 	api.POST("/torrent/download", torrentCtrl.DownloadTorrent)

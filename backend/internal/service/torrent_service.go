@@ -27,7 +27,7 @@ type TorrentStatus struct {
 	MediaID        string  `json:"media_id"`
 	Title          string  `json:"title"`
 	Status         string  `json:"status"`
-	TotalBytes     int64   `json:"total_bytes"`
+	TotalBytes     int64   `json:"total_size"`
 	CompletedBytes int64   `json:"completed_bytes"`
 	ProgressPct    float64 `json:"progress_pct"`
 	DownloadRate   float64 `json:"download_rate_bps"`
@@ -42,7 +42,7 @@ type TorrentTarget struct {
 
 type TorrentService interface {
 	Close()
-	AddMagnet(ctx context.Context, magnetURI string) (*model.Media, error)
+	AddMagnet(ctx context.Context, magnetURI string) (*model.Download, error)
 	GetStatus(mediaID string) (*TorrentStatus, error)
 	ListActive() []TorrentStatus
 	CancelTorrent(mediaID string) error
@@ -50,7 +50,8 @@ type TorrentService interface {
 }
 
 type activeTorrent struct {
-	media            *model.Media
+	downloadID       string
+	title            string
 	hash             string
 	transmissionID   string
 	metadataResolved bool
@@ -58,19 +59,29 @@ type activeTorrent struct {
 }
 
 type torrentService struct {
-	config   *config.Config
-	repo     repository.MediaRepository
-	prefRepo repository.PreferenceRepository
-	mu       sync.Mutex
-	active   map[string]*activeTorrent // keyed by media ID
+	config         *config.Config
+	repo           repository.MediaRepository
+	prefRepo       repository.PreferenceRepository
+	downloadRepo   repository.DownloadRepository
+	scannerService ScannerService
+	mu             sync.Mutex
+	active         map[string]*activeTorrent // keyed by media ID
 }
 
-func NewTorrentService(cfg *config.Config, repo repository.MediaRepository, prefRepo repository.PreferenceRepository) (TorrentService, error) {
+func NewTorrentService(
+	cfg *config.Config,
+	repo repository.MediaRepository,
+	prefRepo repository.PreferenceRepository,
+	downloadRepo repository.DownloadRepository,
+	scannerService ScannerService,
+) (TorrentService, error) {
 	s := &torrentService{
-		config:   cfg,
-		repo:     repo,
-		prefRepo: prefRepo,
-		active:   make(map[string]*activeTorrent),
+		config:         cfg,
+		repo:           repo,
+		prefRepo:       prefRepo,
+		downloadRepo:   downloadRepo,
+		scannerService: scannerService,
+		active:         make(map[string]*activeTorrent),
 	}
 
 	// Verify transmission-remote is available on the system
@@ -100,7 +111,7 @@ func (s *torrentService) Close() {
 	}
 }
 
-func (s *torrentService) AddMagnet(ctx context.Context, magnetURI string) (*model.Media, error) {
+func (s *torrentService) AddMagnet(ctx context.Context, magnetURI string) (*model.Download, error) {
 	hash := getTorrentHash(magnetURI)
 	if hash == "" {
 		return nil, fmt.Errorf("could not extract valid info hash from magnet link")
@@ -125,29 +136,17 @@ func (s *torrentService) AddMagnet(ctx context.Context, magnetURI string) (*mode
 		}
 	}
 
-	meta := fileparser.ParseFilename(title)
-	mediaID := uuid.New().String()
+	downloadID := uuid.New().String()
 
-	language := meta.Language
-	if language == "" {
-		language = "en"
-	}
-
-	m := &model.Media{
-		ID:           mediaID,
-		Title:        meta.Title,
-		OriginalName: "",
-		Year:         meta.Year,
-		Quality:      meta.Quality,
-		FilePath:     filepath.Join(s.config.DownloadDir, "pending-"+hash),
-		FileSize:     0,
-		Status:       model.StatusDownloading,
-		Source:       model.SourceTorrent,
-		Language:     language,
-	}
-
-	if err := m.Validate(); err != nil {
-		return nil, fmt.Errorf("validate media model: %w", err)
+	dl := &model.Download{
+		ID:            downloadID,
+		Title:         title,
+		Status:        model.DownloadStatusDownloading,
+		Type:          model.DownloadTypeTorrent,
+		Progress:      0,
+		TotalSize:     0,
+		CompletedSize: 0,
+		DestPath:      filepath.Join(s.config.DownloadDir, "pending-"+hash),
 	}
 
 	// Clean/truncate magnet link to the first & for transmission-remote compatibility
@@ -162,53 +161,60 @@ func (s *torrentService) AddMagnet(ctx context.Context, magnetURI string) (*mode
 		return nil, fmt.Errorf("failed to add torrent to transmission: %w", err)
 	}
 
-	if err := s.repo.Create(m); err != nil {
-		return nil, fmt.Errorf("create media record: %w", err)
+	if err := s.downloadRepo.Create(dl); err != nil {
+		return nil, fmt.Errorf("create download record: %w", err)
 	}
 
 	trackCtx, cancelFunc := context.WithCancel(context.Background())
 
 	s.mu.Lock()
-	s.active[mediaID] = &activeTorrent{
-		media:            m,
+	s.active[downloadID] = &activeTorrent{
+		downloadID:       downloadID,
+		title:            title,
 		hash:             hash,
 		metadataResolved: false,
 		cancelFunc:       cancelFunc,
 	}
 	s.mu.Unlock()
 
-	go s.trackTorrentDownload(trackCtx, mediaID, hash, m)
+	go s.trackTorrentDownload(trackCtx, downloadID, hash, dl)
 
-	return m, nil
+	return dl, nil
 }
 
-func (s *torrentService) GetStatus(mediaID string) (*TorrentStatus, error) {
+func (s *torrentService) GetStatus(downloadID string) (*TorrentStatus, error) {
 	s.mu.Lock()
-	at, exists := s.active[mediaID]
+	at, exists := s.active[downloadID]
 	s.mu.Unlock()
 
 	if !exists {
-		m, err := s.repo.FindByID(mediaID)
+		dl, err := s.downloadRepo.FindByID(downloadID)
 		if err != nil {
-			return nil, fmt.Errorf("lookup media: %w", err)
+			return nil, fmt.Errorf("lookup download: %w", err)
 		}
-		if m == nil {
-			return nil, fmt.Errorf("torrent not found: %s", mediaID)
+		if dl == nil {
+			return nil, fmt.Errorf("download not found: %s", downloadID)
 		}
 		return &TorrentStatus{
-			MediaID:        m.ID,
-			Title:          m.Title,
-			Status:         string(m.Status),
-			TotalBytes:     m.FileSize,
-			CompletedBytes: m.FileSize,
-			ProgressPct:    100.0,
+			MediaID:        dl.ID,
+			Title:          dl.Title,
+			Status:         string(dl.Status),
+			TotalBytes:     dl.TotalSize,
+			CompletedBytes: dl.CompletedSize,
+			ProgressPct:    dl.Progress,
+			DownloadRate:   dl.DownloadSpeed,
 		}, nil
+	}
+
+	dl, err := s.downloadRepo.FindByID(downloadID)
+	if err != nil || dl == nil {
+		return nil, fmt.Errorf("lookup download: %w", err)
 	}
 
 	if at.transmissionID == "" {
 		return &TorrentStatus{
-			MediaID: at.media.ID,
-			Title:   at.media.Title,
+			MediaID: at.downloadID,
+			Title:   at.title,
 			Status:  "pending",
 		}, nil
 	}
@@ -221,20 +227,20 @@ func (s *torrentService) GetStatus(mediaID string) (*TorrentStatus, error) {
 	job, found := jobs[at.transmissionID]
 	if !found {
 		return &TorrentStatus{
-			MediaID: at.media.ID,
-			Title:   at.media.Title,
-			Status:  string(at.media.Status),
+			MediaID: at.downloadID,
+			Title:   at.title,
+			Status:  string(dl.Status),
 		}, nil
 	}
 
 	peers := getPeerCount(at.transmissionID)
 
 	return &TorrentStatus{
-		MediaID:        at.media.ID,
-		Title:          at.media.Title,
-		Status:         string(at.media.Status),
-		TotalBytes:     at.media.FileSize,
-		CompletedBytes: int64(float64(at.media.FileSize) * job.ProgressPct / 100.0),
+		MediaID:        at.downloadID,
+		Title:          at.title,
+		Status:         string(dl.Status),
+		TotalBytes:     dl.TotalSize,
+		CompletedBytes: int64(float64(dl.TotalSize) * job.ProgressPct / 100.0),
 		ProgressPct:    job.ProgressPct,
 		DownloadRate:   job.DownloadRate,
 		Peers:          peers,
@@ -252,18 +258,24 @@ func (s *torrentService) ListActive() []TorrentStatus {
 
 	var result []TorrentStatus
 	for _, at := range s.active {
+		dl, _ := s.downloadRepo.FindByID(at.downloadID)
 		status := TorrentStatus{
-			MediaID: at.media.ID,
-			Title:   at.media.Title,
-			Status:  string(at.media.Status),
+			MediaID: at.downloadID,
+			Title:   at.title,
+			Status:  "pending",
+		}
+		if dl != nil {
+			status.Status = string(dl.Status)
 		}
 
 		if at.transmissionID != "" {
 			if job, found := jobs[at.transmissionID]; found {
 				status.ProgressPct = job.ProgressPct
 				status.DownloadRate = job.DownloadRate
-				status.TotalBytes = at.media.FileSize
-				status.CompletedBytes = int64(float64(at.media.FileSize) * job.ProgressPct / 100.0)
+				if dl != nil {
+					status.TotalBytes = dl.TotalSize
+					status.CompletedBytes = int64(float64(dl.TotalSize) * job.ProgressPct / 100.0)
+				}
 				status.Peers = getPeerCount(at.transmissionID)
 			}
 		}
@@ -273,33 +285,39 @@ func (s *torrentService) ListActive() []TorrentStatus {
 	return result
 }
 
-func (s *torrentService) CancelTorrent(mediaID string) error {
+func (s *torrentService) CancelTorrent(downloadID string) error {
 	s.mu.Lock()
-	at, exists := s.active[mediaID]
+	at, exists := s.active[downloadID]
 	if exists {
-		delete(s.active, mediaID)
+		delete(s.active, downloadID)
 	}
 	s.mu.Unlock()
 
-	if !exists {
-		return fmt.Errorf("no active torrent download for media: %s", mediaID)
+	dl, err := s.downloadRepo.FindByID(downloadID)
+	if err != nil {
+		return err
+	}
+	if dl == nil {
+		return fmt.Errorf("download not found: %s", downloadID)
 	}
 
-	at.cancelFunc()
+	if exists {
+		at.cancelFunc()
+	}
 
-	if at.transmissionID != "" {
+	if at != nil && at.transmissionID != "" {
 		_ = exec.Command("transmission-remote", "-t", at.transmissionID, "-rad").Run()
 	}
 
-	at.media.Status = model.StatusError
-	_ = s.repo.Update(at.media)
+	dl.Status = model.DownloadStatusCancelled
+	_ = s.downloadRepo.Update(dl)
 
-	slog.Info("Torrent download cancelled and cleaned up", "mediaID", mediaID, "title", at.media.Title)
+	slog.Info("Torrent download cancelled and cleaned up", "downloadID", downloadID, "title", dl.Title)
 	return nil
 }
 
-func (s *torrentService) trackTorrentDownload(ctx context.Context, mediaID string, hash string, m *model.Media) {
-	ticker := time.NewTicker(5 * time.Second)
+func (s *torrentService) trackTorrentDownload(ctx context.Context, downloadID string, hash string, dl *model.Download) {
+	ticker := time.NewTicker(time.Duration(s.config.DownloadUpdateInterval) * time.Second)
 	defer ticker.Stop()
 
 	for {
@@ -308,7 +326,7 @@ func (s *torrentService) trackTorrentDownload(ctx context.Context, mediaID strin
 			return
 		case <-ticker.C:
 			s.mu.Lock()
-			at, exists := s.active[mediaID]
+			at, exists := s.active[downloadID]
 			s.mu.Unlock()
 			if !exists {
 				return
@@ -352,22 +370,16 @@ func (s *torrentService) trackTorrentDownload(ctx context.Context, mediaID strin
 						meta := fileparser.ParseFilename(filename)
 						finalPath := filepath.Join(s.config.DownloadDir, largestFile.Name)
 
-						m.Title = meta.Title
-						m.OriginalName = filename
-						m.Year = meta.Year
-						m.Quality = meta.Quality
-						m.Language = meta.Language
-						if m.Language == "" {
-							m.Language = "en"
-						}
-						m.FilePath = finalPath
-						m.FileSize = largestFile.Size
-						_ = s.repo.Update(m)
+						dl.Title = meta.Title
+						dl.DestPath = finalPath
+						dl.TotalSize = largestFile.Size
+						_ = s.downloadRepo.Update(dl)
 
 						s.mu.Lock()
+						at.title = meta.Title
 						at.metadataResolved = true
 						s.mu.Unlock()
-						slog.Info("Torrent metadata resolved in background", "title", m.Title, "file", filename)
+						slog.Info("Torrent metadata resolved in background", "title", dl.Title, "file", filename)
 					}
 				}
 			}
@@ -378,31 +390,46 @@ func (s *torrentService) trackTorrentDownload(ctx context.Context, mediaID strin
 				if err == nil {
 					job, found := jobs[at.transmissionID]
 					if found {
-						if job.ProgressPct >= 100.0 {
-							slog.Info("Torrent download complete, moving file", "title", m.Title)
+						dl.Progress = job.ProgressPct
+						dl.CompletedSize = int64(float64(dl.TotalSize) * job.ProgressPct / 100.0)
+						dl.DownloadSpeed = job.DownloadRate
+						
+						remainingBytes := dl.TotalSize - dl.CompletedSize
+						if dl.DownloadSpeed > 0 && remainingBytes > 0 {
+							etaSecs := int64(float64(remainingBytes) / dl.DownloadSpeed)
+							dl.ETA = fmt.Sprintf("%ds", etaSecs)
+						} else {
+							dl.ETA = ""
+						}
 
-							destPath := getUniqueFilePath(s.getMediaDir(), m.OriginalName)
-							err := moveFile(m.FilePath, destPath)
+						_ = s.downloadRepo.Update(dl)
+
+						if job.ProgressPct >= 100.0 {
+							slog.Info("Torrent download complete, moving file", "title", dl.Title)
+
+							destPath := getUniqueFilePath(s.getMediaDir(), filepath.Base(dl.DestPath))
+							err := moveFile(dl.DestPath, destPath)
 							if err != nil {
 								slog.Error("Failed to move completed torrent file", "err", err)
-								m.Status = model.StatusError
-								_ = s.repo.Update(m)
-								s.removeActive(mediaID)
+								dl.Status = model.DownloadStatusFailed
+								_ = s.downloadRepo.Update(dl)
+								s.removeActive(downloadID)
 								return
 							}
 
-							m.FilePath = destPath
-							m.Status = model.StatusProcessing
-							_ = s.repo.Update(m)
+							dl.DestPath = destPath
+							dl.Status = model.DownloadStatusCompleted
+							dl.Progress = 100.0
+							_ = s.downloadRepo.Update(dl)
 
 							// Clean up Transmission job and temporary files
 							_ = exec.Command("transmission-remote", "-t", at.transmissionID, "-rad").Run()
 
-							s.removeActive(mediaID)
-							slog.Info("Torrent download complete, triggered background processing", "title", m.Title)
+							s.removeActive(downloadID)
+							slog.Info("Torrent download complete, triggering directory scan", "title", dl.Title)
 
-							// Trigger background processing (ffprobe, main thumbnail, scrubber thumbnails)
-							ProcessMediaBackground(s.config, s.repo, m.ID, destPath)
+							// Automatically scan folder to ingest the file and extract thumbnails
+							go s.scannerService.ScanDirectory(context.Background())
 							return
 						}
 					}
@@ -419,10 +446,17 @@ func (s *torrentService) removeActive(mediaID string) {
 }
 
 func (s *torrentService) resumeActiveTorrents() {
-	downloading, err := s.repo.FindByStatus(model.StatusDownloading)
+	allDl, err := s.downloadRepo.FindAll()
 	if err != nil {
 		slog.Error("Failed to lookup downloading torrents on startup", "err", err)
 		return
+	}
+
+	var downloading []model.Download
+	for _, dl := range allDl {
+		if dl.Status == model.DownloadStatusDownloading && dl.Type == model.DownloadTypeTorrent {
+			downloading = append(downloading, dl)
+		}
 	}
 
 	jobs, err := s.queryTransmissionList()
@@ -431,15 +465,13 @@ func (s *torrentService) resumeActiveTorrents() {
 		return
 	}
 
-	for _, mVal := range downloading {
-		m := mVal
+	for _, dlVal := range downloading {
+		dl := dlVal
 		var matchedJob *TransmissionJob
-		mTitle := strings.ToLower(m.Title)
-		mOrigName := strings.ToLower(m.OriginalName)
+		mTitle := strings.ToLower(dl.Title)
 		for _, job := range jobs {
 			jobTitle := strings.ToLower(job.Title)
-			if (mTitle != "" && (strings.Contains(jobTitle, mTitle) || strings.Contains(mTitle, jobTitle))) ||
-				(mOrigName != "" && (strings.Contains(jobTitle, mOrigName) || strings.Contains(mOrigName, jobTitle))) {
+			if mTitle != "" && (strings.Contains(jobTitle, mTitle) || strings.Contains(mTitle, jobTitle)) {
 				matchedJob = job
 				break
 			}
@@ -449,21 +481,22 @@ func (s *torrentService) resumeActiveTorrents() {
 			hash, _ := getTorrentHashFromInfo(matchedJob.ID)
 			trackCtx, cancelFunc := context.WithCancel(context.Background())
 			at := &activeTorrent{
-				media:            &m,
+				downloadID:       dl.ID,
+				title:            dl.Title,
 				hash:             hash,
 				transmissionID:   matchedJob.ID,
-				metadataResolved: m.OriginalName != "",
+				metadataResolved: dl.DestPath != "" && !strings.Contains(dl.DestPath, "pending-"),
 				cancelFunc:       cancelFunc,
 			}
 			s.mu.Lock()
-			s.active[m.ID] = at
+			s.active[dl.ID] = at
 			s.mu.Unlock()
 
-			go s.trackTorrentDownload(trackCtx, m.ID, hash, &m)
-			slog.Info("Resumed tracking torrent download on startup", "title", m.Title, "transmissionID", matchedJob.ID)
+			go s.trackTorrentDownload(trackCtx, dl.ID, hash, &dl)
+			slog.Info("Resumed tracking torrent download on startup", "title", dl.Title, "transmissionID", matchedJob.ID)
 		} else {
-			m.Status = model.StatusError
-			_ = s.repo.Update(&m)
+			dl.Status = model.DownloadStatusFailed
+			_ = s.downloadRepo.Update(&dl)
 		}
 	}
 }
@@ -598,91 +631,41 @@ func getTorrentFiles(transmissionID string) ([]TorrentFile, error) {
 			continue
 		}
 		donePct := 0.0
-		if strings.HasSuffix(fields[1], "%") {
-			donePct, _ = strconv.ParseFloat(strings.TrimSuffix(fields[1], "%"), 64)
+		doneStr := strings.TrimSuffix(fields[1], "%")
+		if dVal, errD := strconv.ParseFloat(doneStr, 64); errD == nil {
+			donePct = dVal
 		}
-		sizeStr := fields[4] + " " + fields[5]
-		size := parseSizeToBytes(sizeStr)
+
+		sizeStr := fields[3]
+		sizeUnit := fields[4]
+		sizeBytes := parseSizeToBytes(sizeStr, sizeUnit)
+
 		name := strings.Join(fields[6:], " ")
+
 		files = append(files, TorrentFile{
 			Index: idx,
 			Done:  donePct,
-			Size:  size,
+			Size:  sizeBytes,
 			Name:  name,
-		})
+		} )
 	}
 	return files, nil
 }
 
-func getTorrentHash(magnet string) string {
-	u, err := url.Parse(magnet)
-	if err != nil {
-		re := regexp.MustCompile(`(?i)xt=urn:btih:([a-f0-9]{32,40})`)
-		matches := re.FindStringSubmatch(magnet)
-		if len(matches) > 1 {
-			return strings.ToLower(matches[1])
-		}
-		return ""
-	}
-	xt := u.Query().Get("xt")
-	if strings.HasPrefix(xt, "urn:btih:") {
-		return strings.ToLower(strings.TrimPrefix(xt, "urn:btih:"))
-	}
-	// Fallback to regex
-	re := regexp.MustCompile(`(?i)xt=urn:btih:([a-f0-9]{32,40})`)
-	matches := re.FindStringSubmatch(magnet)
-	if len(matches) > 1 {
-		return strings.ToLower(matches[1])
-	}
-	return ""
-}
-
-func parseSpeedBps(speedStr string) float64 {
-	fields := strings.Fields(speedStr)
-	if len(fields) == 0 {
-		return 0
-	}
-	val, err := strconv.ParseFloat(fields[0], 64)
+func parseSizeToBytes(sizeStr string, unit string) int64 {
+	val, err := strconv.ParseFloat(sizeStr, 64)
 	if err != nil {
 		return 0
 	}
-	if len(fields) < 2 {
-		return val
-	}
-	unit := strings.ToLower(fields[1])
-	if strings.Contains(unit, "mb") {
-		return val * 1024 * 1024
-	}
-	if strings.Contains(unit, "kb") {
-		return val * 1024
-	}
-	if strings.Contains(unit, "gb") {
-		return val * 1024 * 1024 * 1024
-	}
-	return val
-}
-
-func parseSizeToBytes(sizeStr string) int64 {
-	fields := strings.Fields(sizeStr)
-	if len(fields) == 0 {
-		return 0
-	}
-	val, err := strconv.ParseFloat(fields[0], 64)
-	if err != nil {
-		return 0
-	}
-	if len(fields) < 2 {
-		return int64(val)
-	}
-	unit := strings.ToLower(fields[1])
-	if strings.Contains(unit, "gb") {
-		return int64(val * 1024 * 1024 * 1024)
-	}
-	if strings.Contains(unit, "mb") {
-		return int64(val * 1024 * 1024)
-	}
-	if strings.Contains(unit, "kb") {
+	switch strings.ToUpper(unit) {
+	case "KB", "KIB":
 		return int64(val * 1024)
+	case "MB", "MIB":
+		return int64(val * 1024 * 1024)
+	case "GB", "GIB":
+		return int64(val * 1024 * 1024 * 1024)
+	case "TB", "TIB":
+		return int64(val * 1024 * 1024 * 1024 * 1024)
 	}
 	return int64(val)
 }
@@ -693,13 +676,51 @@ func getPeerCount(transmissionID string) int {
 	if err != nil {
 		return 0
 	}
-	re := regexp.MustCompile(`Peers:\s+connected\s+to\s+(\d+)`)
+	re := regexp.MustCompile(`(?i)Peers:\s+connected\s+with\s+(\d+)`)
 	matches := re.FindStringSubmatch(string(out))
 	if len(matches) > 1 {
 		val, _ := strconv.Atoi(matches[1])
 		return val
 	}
 	return 0
+}
+
+func getTorrentHash(magnetURI string) string {
+	u, err := url.Parse(magnetURI)
+	if err != nil {
+		return ""
+	}
+	xt := u.Query().Get("xt")
+	if !strings.HasPrefix(xt, "urn:btih:") {
+		return ""
+	}
+	hash := strings.TrimPrefix(xt, "urn:btih:")
+	return strings.ToLower(hash)
+}
+
+func parseSpeedBps(speedStr string) float64 {
+	if speedStr == "0" || speedStr == "" {
+		return 0
+	}
+	re := regexp.MustCompile(`(?i)([\d\.]+)\s*([a-z]*)`)
+	matches := re.FindStringSubmatch(speedStr)
+	if len(matches) < 2 {
+		return 0
+	}
+	val, _ := strconv.ParseFloat(matches[1], 64)
+	unit := ""
+	if len(matches) > 2 {
+		unit = matches[2]
+	}
+	switch strings.ToLower(unit) {
+	case "kb/s", "kbps", "k":
+		return val * 1000
+	case "mb/s", "mbps", "m":
+		return val * 1000000
+	case "gb/s", "gbps", "g":
+		return val * 1000000000
+	}
+	return val
 }
 
 func getTorrentHashFromInfo(transmissionID string) (string, error) {
@@ -776,4 +797,3 @@ func (s *torrentService) ScanHTML(ctx context.Context, pageURL string) ([]Torren
 
 	return targets, nil
 }
-

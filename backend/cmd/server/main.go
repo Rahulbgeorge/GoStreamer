@@ -45,19 +45,20 @@ func main() {
 	// 4. Initialize Dependency Injections
 	mediaRepo := sqlite.NewMediaRepository(db)
 	prefRepo := sqlite.NewPreferenceRepository(db)
+	downloadRepo := sqlite.NewDownloadRepository(db)
 
 	streamService := service.NewStreamService(mediaRepo)
 	scannerService := service.NewScannerService(cfg, mediaRepo, prefRepo)
 	uploadService := service.NewUploadService(cfg, mediaRepo, prefRepo)
-	torrentService, err := service.NewTorrentService(cfg, mediaRepo, prefRepo)
+	torrentService, err := service.NewTorrentService(cfg, mediaRepo, prefRepo, downloadRepo, scannerService)
 	if err != nil {
 		slog.Error("Failed to initialize torrent service", "err", err)
 		os.Exit(1)
 	}
 	defer torrentService.Close()
 
-	youtubeDownloader := service.NewYoutubeDownloader()
-	youtubeCtrl := controller.NewYoutubeController(cfg, youtubeDownloader, mediaRepo, prefRepo)
+	youtubeDownloader := service.NewYoutubeDownloader(cfg, downloadRepo, prefRepo, scannerService)
+	youtubeCtrl := controller.NewYoutubeController(cfg, youtubeDownloader, mediaRepo, prefRepo, downloadRepo, scannerService)
 
 	mediaCtrl := controller.NewMediaController(mediaRepo, scannerService)
 	streamCtrl := controller.NewStreamController(streamService, cfg)
@@ -65,6 +66,7 @@ func main() {
 	torrentCtrl := controller.NewTorrentController(torrentService)
 	prefCtrl := controller.NewPreferenceController(prefRepo)
 	systemCtrl := controller.NewSystemController()
+	downloadCtrl := controller.NewDownloadController(downloadRepo, torrentService)
 
 	// 5. Start file auto-discovery services
 	ctx, cancel := context.WithCancel(context.Background())
@@ -77,7 +79,7 @@ func main() {
 	defer scannerService.Stop()
 
 	// 6. Setup Gin Router
-	router := setupRouter(cfg, mediaCtrl, streamCtrl, uploadCtrl, torrentCtrl, youtubeCtrl, prefCtrl, systemCtrl)
+	router := setupRouter(cfg, mediaCtrl, streamCtrl, uploadCtrl, torrentCtrl, youtubeCtrl, prefCtrl, systemCtrl, downloadCtrl)
 
 	srv := &http.Server{
 		Addr:    ":" + cfg.ServerPort,
@@ -111,7 +113,7 @@ func main() {
 
 // prepareFolders creates directories for media, downloads, uploads, and thumbnails.
 func prepareFolders(cfg *config.Config) {
-	for _, path := range []string{cfg.MediaDir, cfg.DownloadDir, cfg.UploadDir, cfg.ThumbnailDir} {
+	for _, path := range []string{cfg.MediaDir, cfg.DownloadDir, cfg.UploadDir, cfg.ThumbnailDir, cfg.YoutubeDownloadDir} {
 		if err := os.MkdirAll(path, 0755); err != nil {
 			slog.Error("Failed to initialize system folder", "path", path, "err", err)
 			os.Exit(1)

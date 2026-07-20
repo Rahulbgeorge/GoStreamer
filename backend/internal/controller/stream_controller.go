@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -35,10 +36,41 @@ func (ctrl *StreamController) StreamVideo(c *gin.Context) {
 	// Capture modification time for HTTP Cache-Control verification
 	stat, err := file.Stat()
 	var modTime time.Time
+	var fileSize int64
 	if err == nil {
 		modTime = stat.ModTime()
+		fileSize = stat.Size()
 	} else {
 		modTime = time.Now()
+	}
+
+	// Limit range chunk response to 5MB max to protect bandwidth and avoid massive data buffering.
+	rangeHeader := c.Request.Header.Get("Range")
+	if rangeHeader != "" && strings.HasPrefix(rangeHeader, "bytes=") {
+		trimmedRange := strings.TrimPrefix(rangeHeader, "bytes=")
+		parts := strings.Split(trimmedRange, "-")
+		if len(parts) == 2 {
+			start, errStart := strconv.ParseInt(parts[0], 10, 64)
+			if errStart == nil && start >= 0 {
+				var end int64 = -1
+				if parts[1] != "" {
+					if parsedEnd, errEnd := strconv.ParseInt(parts[1], 10, 64); errEnd == nil {
+						end = parsedEnd
+					}
+				}
+
+				maxChunk := int64(5 * 1024 * 1024) // 5 MB max chunk limit
+				if end == -1 || (end - start + 1) > maxChunk {
+					end = start + maxChunk - 1
+				}
+				if end >= fileSize {
+					end = fileSize - 1
+				}
+				if start < fileSize && start <= end {
+					c.Request.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", start, end))
+				}
+			}
+		}
 	}
 
 	// ServeContent automatically parses Range request headers and handles 206 Partial Content response

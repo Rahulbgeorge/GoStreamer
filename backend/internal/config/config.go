@@ -9,15 +9,17 @@ import (
 
 // Config holds the application configuration parameters.
 type Config struct {
-	ServerPort        string
-	DatabasePath      string
-	MediaDir          string
-	DownloadDir       string
-	UploadDir         string
-	ThumbnailDir      string
-	LogLevel          string
-	DefaultLanguage   string
-	AllowedExtensions []string
+	ServerPort             string
+	DatabasePath           string
+	MediaDir               string
+	DownloadDir            string
+	UploadDir              string
+	ThumbnailDir           string
+	YoutubeDownloadDir     string
+	DownloadUpdateInterval int
+	LogLevel               string
+	DefaultLanguage        string
+	AllowedExtensions      []string
 }
 
 // Load reads config from environment variables or applies defaults.
@@ -41,15 +43,17 @@ func Load() *Config {
 
 	return &Config{
 		// ServerPort:        getEnv("SERVER_PORT", "8000"),
-		ServerPort:        "8000",
-		DatabasePath:      getEnv("DATABASE_PATH", filepath.Join(baseDir, "data", "streaming.db")),
-		MediaDir:          getEnv("MEDIA_DIR", filepath.Join(baseDir, "media")),
-		DownloadDir:       getEnv("DOWNLOAD_DIR", filepath.Join(baseDir, "downloads")),
-		UploadDir:         getEnv("UPLOAD_DIR", filepath.Join(baseDir, "uploads")),
-		ThumbnailDir:      getEnv("THUMBNAIL_DIR", filepath.Join(baseDir, "data", "thumbnails")),
-		LogLevel:          getEnv("LOG_LEVEL", "info"),
-		DefaultLanguage:   getEnv("DEFAULT_LANGUAGE", "en"),
-		AllowedExtensions: allowedExts,
+		ServerPort:             "8000",
+		DatabasePath:           getEnv("DATABASE_PATH", filepath.Join(baseDir, "data", "streaming.db")),
+		MediaDir:               getEnv("MEDIA_DIR", filepath.Join(baseDir, "media")),
+		DownloadDir:            getEnv("DOWNLOAD_DIR", filepath.Join(baseDir, "downloads")),
+		UploadDir:              getEnv("UPLOAD_DIR", filepath.Join(baseDir, "uploads")),
+		ThumbnailDir:           getEnv("THUMBNAIL_DIR", filepath.Join(baseDir, "data", "thumbnails")),
+		YoutubeDownloadDir:     getEnv("YOUTUBE_DOWNLOAD_DIR", filepath.Join(baseDir, "youtube")),
+		DownloadUpdateInterval: getEnvInt("DOWNLOAD_UPDATE_INTERVAL", 5),
+		LogLevel:               getEnv("LOG_LEVEL", "info"),
+		DefaultLanguage:        getEnv("DEFAULT_LANGUAGE", "en"),
+		AllowedExtensions:      allowedExts,
 	}
 }
 
