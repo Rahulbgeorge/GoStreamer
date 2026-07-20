@@ -39,7 +39,7 @@
   gap: var(--space-md);
 }
 
-.btn-action.admin {
+.btn-action.admin, .btn-action.tasks-dashboard {
   background-color: var(--bg-card);
   border: 1px solid var(--border-color);
   padding: 8px 16px;
@@ -49,7 +49,7 @@
   transition: var(--transition-fast);
 }
 
-.btn-action.admin:hover {
+.btn-action.admin:hover, .btn-action.tasks-dashboard:hover {
   background-color: var(--bg-card-hover);
   border-color: var(--text-muted);
 }

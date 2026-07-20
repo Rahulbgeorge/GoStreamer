@@ -6,6 +6,7 @@ import { SearchBar } from '../components/SearchBar';
 import { HeroBanner } from '../components/HeroBanner';
 import { MediaRow } from '../components/MediaRow';
 import { DetailPage } from './DetailPage';
+import { AdminPage } from './AdminPage';
 import { EditModal } from '../components/EditModal';
 import { UploadModal } from '../components/UploadModal';
 import { VideoPlayer } from '../components/VideoPlayer';
@@ -24,6 +25,7 @@ export const HomePage: React.FC = () => {
   
   const [isEditing, setIsEditing] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [isAdminPage, setIsAdminPage] = useState(false);
   const [activeVideo, setActiveVideo] = useState<Media | null>(null);
 
   const fetchLibraryData = async () => {
@@ -97,7 +99,7 @@ export const HomePage: React.FC = () => {
 
       if (e.key === 'ArrowRight') {
         if (focusedRow === 'header') {
-          setFocusedIndex(prev => isTv ? 0 : Math.min(prev + 1, 1));
+          setFocusedIndex(prev => isTv ? 0 : Math.min(prev + 1, 2));
         } else if (focusedRow === 'recent' || focusedRow === 'grid') {
           setFocusedIndex(prev => Math.min(prev + 1, movies.length - 1));
         }
@@ -127,6 +129,9 @@ export const HomePage: React.FC = () => {
           } else if (focusedIndex === 1) {
             e.preventDefault();
             setIsUploading(true);
+          } else if (focusedIndex === 2) {
+            e.preventDefault();
+            setIsAdminPage(true);
           }
         } else if (focusedRow === 'recent') {
           e.preventDefault();
@@ -140,7 +145,7 @@ export const HomePage: React.FC = () => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [focusedRow, focusedIndex, movies, selectedMedia, activeVideo, isUploading, isEditing]);
+  }, [focusedRow, focusedIndex, movies, selectedMedia, activeVideo, isUploading, isEditing, isAdminPage]);
 
   const handleSearch = async (query: string) => {
     if (query.trim() === '') {
@@ -176,6 +181,10 @@ export const HomePage: React.FC = () => {
     }
   };
 
+  if (isAdminPage) {
+    return <AdminPage onBack={() => setIsAdminPage(false)} />;
+  }
+
   const heroMovie = movies.length > 0 ? movies[0] : null;
 
   return (
@@ -196,6 +205,12 @@ export const HomePage: React.FC = () => {
             onClick={() => setIsUploading(true)}
           >
             📤 {t('admin')}
+          </button>
+          <button 
+            className={`btn-action tasks-dashboard ${focusedRow === 'header' && focusedIndex === 2 ? 'focused' : ''}`} 
+            onClick={() => setIsAdminPage(true)}
+          >
+            ⚡ Tasks & Downloads
           </button>
         </div>
       </header>

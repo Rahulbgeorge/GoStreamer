@@ -54,3 +54,18 @@ export interface BrowseData {
   parent_path: string;
   directories: DirectoryItem[];
 }
+
+export interface Download {
+  id: string;
+  title: string;
+  status: 'downloading' | 'completed' | 'failed' | 'cancelled';
+  type: 'torrent' | 'youtube';
+  progress: number;
+  total_size: number;
+  completed_size: number;
+  download_speed: number;
+  eta: string;
+  dest_path: string;
+  created_at: string;
+  updated_at: string;
+}

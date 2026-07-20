@@ -1,4 +1,4 @@
-import type { Media, LibraryStats, TorrentStatus, TorrentTarget, Preference, BrowseData } from '../types/media';
+import type { Media, LibraryStats, TorrentStatus, TorrentTarget, Preference, BrowseData, Download } from '../types/media';
 
 export let API_BASE = (import.meta.env.VITE_API_BASE as string) || `/api/v1`;
 
@@ -262,5 +262,19 @@ export const mediaService = {
       throw new Error(json.error || 'Failed to browse directory');
     }
     return json.data;
+  },
+
+  async getDownloads(): Promise<Download[]> {
+    const res = await fetch(`${API_BASE}/downloads`);
+    const json = await res.json();
+    return json.data || [];
+  },
+
+  async deleteDownload(id: string): Promise<boolean> {
+    const res = await fetch(`${API_BASE}/downloads/${id}`, {
+      method: 'DELETE'
+    });
+    const json = await res.json();
+    return !!json.data;
   }
 };
