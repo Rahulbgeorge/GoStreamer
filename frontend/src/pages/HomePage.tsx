@@ -13,6 +13,7 @@ import { VideoPlayer } from '../components/VideoPlayer';
 import '../styles/global.css';
 import './HomePage.css';
 
+// Build cache breaker to clear CDN cache layers: 2026-07-20 03:55
 export const HomePage: React.FC = () => {
   const { t } = useTranslation();
   const [movies, setMovies] = useState<Media[]>([]);
@@ -43,6 +44,7 @@ export const HomePage: React.FC = () => {
 
   useEffect(() => {
     fetchLibraryData();
+    console.log("StreamPlayer Dashboard initialized - v2.0.1");
   }, []);
 
   useEffect(() => {
