@@ -144,9 +144,7 @@ func (ctrl *MediaController) DeleteMedia(c *gin.Context) {
 
 	// Optionally try to delete actual files if located in dynamic workspace folders
 	_ = os.Remove(m.FilePath)
-	if m.ThumbnailPath != "" {
-		_ = os.Remove(m.ThumbnailPath)
-	}
+	service.CleanUpThumbnails(m.ID, m.FilePath)
 
 	c.JSON(http.StatusOK, gin.H{"data": true})
 }

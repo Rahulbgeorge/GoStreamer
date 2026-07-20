@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "build:prod": "node build_prod.js",
+    "build:dev": "node build_dev.js",
     "preview": "vite preview",
     "android:sync": "cap sync android",
     "android:open": "cap open android",

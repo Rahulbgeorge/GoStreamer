@@ -166,6 +166,9 @@ func (s *scannerService) watchLoop(ctx context.Context) {
 	}
 }
 
+// scanLoop periodically runs a full directory scan at a configured interval (every 5 minutes)
+// to discover, ingest, and synchronize media files in the media folder. It runs in the
+// background and terminates cleanly when the service is stopped or the context is cancelled.
 func (s *scannerService) scanLoop(ctx context.Context) {
 	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
@@ -242,10 +245,8 @@ func (s *scannerService) ScanDirectory(ctx context.Context) {
 				if deleteErr := s.repo.Delete(m.ID); deleteErr != nil {
 					slog.Error("Failed to delete missing media record", "id", m.ID, "err", deleteErr)
 				}
-				// Clean up thumbnail
-				if m.ThumbnailPath != "" {
-					_ = os.Remove(m.ThumbnailPath)
-				}
+				// Clean up thumbnails (both main and scrubber)
+				CleanUpThumbnails(m.ID, m.FilePath)
 			}
 		}
 	}

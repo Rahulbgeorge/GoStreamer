@@ -25,6 +25,7 @@ import (
 func main() {
 	// 1. Load configs & configure structured slog logger
 	cfg := config.Load()
+	slog.Info("Config", "cfg", cfg)
 	cfg.SetupLogger()
 
 	wd, _ := os.Getwd()

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"streamingplayer/internal/model"
 	"streamingplayer/internal/repository"
@@ -12,6 +13,8 @@ import (
 type StreamService interface {
 	GetVideoStream(ctx context.Context, mediaID string) (*os.File, *model.Media, error)
 	GetThumbnailStream(ctx context.Context, mediaID string) (*os.File, error)
+	GetScrubberStatus(ctx context.Context, mediaID string) (int, error)
+	GetScrubberImage(ctx context.Context, mediaID string, frame int) (*os.File, error)
 }
 
 type streamService struct {
@@ -53,6 +56,48 @@ func (s *streamService) GetThumbnailStream(ctx context.Context, mediaID string) 
 	file, err := os.Open(media.ThumbnailPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open thumbnail file: %w", err)
+	}
+
+	return file, nil
+}
+
+// GetScrubberStatus counts how many scrubber thumbnail frames exist for the media.
+func (s *streamService) GetScrubberStatus(ctx context.Context, mediaID string) (int, error) {
+	media, err := s.repo.FindByID(mediaID)
+	if err != nil {
+		return 0, fmt.Errorf("lookup media for scrubber status: %w", err)
+	}
+	if media == nil || media.FilePath == "" {
+		return 0, fmt.Errorf("media file not found: %s", mediaID)
+	}
+
+	dir := filepath.Join(filepath.Dir(media.FilePath), ".thumbnails")
+	count := 0
+	for {
+		filePath := filepath.Join(dir, fmt.Sprintf("scrub_%s_%d.jpg", mediaID, count+1))
+		if _, err := os.Stat(filePath); os.IsNotExist(err) {
+			break
+		}
+		count++
+	}
+
+	return count, nil
+}
+
+// GetScrubberImage opens and returns the requested scrubber frame file handle.
+func (s *streamService) GetScrubberImage(ctx context.Context, mediaID string, frame int) (*os.File, error) {
+	media, err := s.repo.FindByID(mediaID)
+	if err != nil {
+		return nil, fmt.Errorf("lookup media for scrubber image: %w", err)
+	}
+	if media == nil || media.FilePath == "" {
+		return nil, fmt.Errorf("media file not found: %s", mediaID)
+	}
+
+	filePath := filepath.Join(filepath.Dir(media.FilePath), ".thumbnails", fmt.Sprintf("scrub_%s_%d.jpg", mediaID, frame))
+	file, err := os.Open(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open scrubber file: %w", err)
 	}
 
 	return file, nil

@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strconv"
 	"time"
 
@@ -78,14 +76,16 @@ func (ctrl *StreamController) StreamThumbnail(c *gin.Context) {
 func (ctrl *StreamController) GetScrubberStatus(c *gin.Context) {
 	id := c.Param("id")
 
-	// We count how many scrub files exist: scrub_<id>_<frame>.jpg
-	count := 0
-	for {
-		filePath := filepath.Join(ctrl.cfg.ThumbnailDir, fmt.Sprintf("scrub_%s_%d.jpg", id, count+1))
-		if _, err := os.Stat(filePath); os.IsNotExist(err) {
-			break
-		}
-		count++
+	count, err := ctrl.streamService.GetScrubberStatus(c.Request.Context(), id)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"data": gin.H{
+				"ready":    false,
+				"interval": 10,
+				"count":    0,
+			},
+		})
+		return
 	}
 
 	if count == 0 {
@@ -117,15 +117,23 @@ func (ctrl *StreamController) StreamScrubberImage(c *gin.Context) {
 		return
 	}
 
-	filePath := filepath.Join(ctrl.cfg.ThumbnailDir, fmt.Sprintf("scrub_%s_%d.jpg", id, frame))
-	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+	file, err := ctrl.streamService.GetScrubberImage(c.Request.Context(), id, frame)
+	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Scrubber frame not found"})
 		return
 	}
+	defer file.Close()
 
-	// Serve the file
+	stat, err := file.Stat()
+	var modTime time.Time
+	if err == nil {
+		modTime = stat.ModTime()
+	} else {
+		modTime = time.Now()
+	}
+
 	c.Header("Content-Type", "image/jpeg")
 	c.Header("Cache-Control", "public, max-age=31536000") // Cache scrubber images for a year
-	c.File(filePath)
+	http.ServeContent(c.Writer, c.Request, fmt.Sprintf("scrub_%s_%d.jpg", id, frame), modTime, file)
 }
 
