@@ -149,6 +149,32 @@ func (ctrl *MediaController) DeleteMedia(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": true})
 }
 
+type ProgressRequest struct {
+	LastPosition int `json:"last_position"`
+	Position     int `json:"position"`
+}
+
+func (ctrl *MediaController) UpdateProgress(c *gin.Context) {
+	id := c.Param("id")
+	var req ProgressRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid json body"})
+		return
+	}
+
+	pos := req.LastPosition
+	if pos == 0 && req.Position > 0 {
+		pos = req.Position
+	}
+
+	if err := ctrl.repo.UpdateProgress(id, pos); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"status": "success", "id": id, "last_position": pos})
+}
+
 func (ctrl *MediaController) GetLibraryStats(c *gin.Context) {
 	count, err := ctrl.repo.Count()
 	if err != nil {

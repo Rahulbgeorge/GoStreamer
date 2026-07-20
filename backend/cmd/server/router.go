@@ -43,6 +43,7 @@ func setupRouter(
 	api.GET("/media/stats", mediaCtrl.GetLibraryStats)
 	api.GET("/media/search", mediaCtrl.SearchMedia)
 	api.POST("/media/scan", mediaCtrl.ScanMedia)
+	api.POST("/media/:id/progress", mediaCtrl.UpdateProgress)
 
 	// Preferences Routes
 	api.GET("/preferences", prefCtrl.GetAllPreferences)

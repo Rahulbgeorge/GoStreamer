@@ -99,5 +99,8 @@ func setupDatabase(cfg *config.Config) (*sql.DB, error) {
 		}
 	}
 
+	// Always ensure last_position column exists on media table
+	_, _ = db.Exec(`ALTER TABLE media ADD COLUMN last_position INTEGER NOT NULL DEFAULT 0;`)
+
 	return db, nil
 }

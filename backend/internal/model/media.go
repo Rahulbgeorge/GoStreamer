@@ -42,7 +42,8 @@ type Media struct {
 	ThumbnailPath string      `json:"thumbnail_path"`
 	Status        MediaStatus `json:"status"`
 	Source        MediaSource `json:"source"`
-	Language      string      `json:"language"` // e.g. "en", "hi"
+	Language      string      `json:"language"`      // e.g. "en", "hi"
+	LastPosition  int         `json:"last_position"` // last watched position in seconds
 	CreatedAt     time.Time   `json:"created_at"`
 	UpdatedAt     time.Time   `json:"updated_at"`
 }

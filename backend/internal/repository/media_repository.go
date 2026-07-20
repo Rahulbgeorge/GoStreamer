@@ -11,6 +11,7 @@ type MediaRepository interface {
 	Search(query string, limit, offset int) ([]model.Media, error)
 	Create(media *model.Media) error
 	Update(media *model.Media) error
+	UpdateProgress(id string, position int) error
 	Delete(id string) error
 	Count() (int, error)
 	TotalSize() (int64, error)

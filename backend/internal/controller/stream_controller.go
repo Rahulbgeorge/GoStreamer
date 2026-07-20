@@ -59,7 +59,7 @@ func (ctrl *StreamController) StreamVideo(c *gin.Context) {
 					}
 				}
 
-				maxChunk := int64(5 * 1024 * 1024) // 5 MB max chunk limit
+				maxChunk := int64(16 * 1024 * 1024) // 16 MB max chunk limit
 				if end == -1 || (end - start + 1) > maxChunk {
 					end = start + maxChunk - 1
 				}
@@ -68,6 +68,12 @@ func (ctrl *StreamController) StreamVideo(c *gin.Context) {
 				}
 				if start < fileSize && start <= end {
 					c.Request.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", start, end))
+					if media.Duration > 0 && fileSize > 0 {
+						estimatedSec := int((float64(start) / float64(fileSize)) * float64(media.Duration))
+						if estimatedSec >= 0 {
+							_ = ctrl.streamService.UpdateProgress(c.Request.Context(), id, estimatedSec)
+						}
+					}
 				}
 			}
 		}

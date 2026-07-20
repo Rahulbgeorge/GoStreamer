@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -102,6 +103,15 @@ func (s *torrentService) getMediaDir() string {
 	return s.config.MediaDir
 }
 
+func (s *torrentService) getTorrentDownloadDir() string {
+	baseDir := s.getMediaDir()
+	torrentDir := filepath.Join(baseDir, "torrent-download")
+	if err := os.MkdirAll(torrentDir, 0777); err != nil {
+		slog.Error("Failed to create torrent-download directory", "path", torrentDir, "err", err)
+	}
+	return torrentDir
+}
+
 func (s *torrentService) Close() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -137,6 +147,7 @@ func (s *torrentService) AddMagnet(ctx context.Context, magnetURI string) (*mode
 	}
 
 	downloadID := uuid.New().String()
+	torrentDir := s.getTorrentDownloadDir()
 
 	dl := &model.Download{
 		ID:            downloadID,
@@ -146,7 +157,7 @@ func (s *torrentService) AddMagnet(ctx context.Context, magnetURI string) (*mode
 		Progress:      0,
 		TotalSize:     0,
 		CompletedSize: 0,
-		DestPath:      filepath.Join(s.config.DownloadDir, "pending-"+hash),
+		DestPath:      filepath.Join(torrentDir, "pending-"+hash),
 	}
 
 	// Clean/truncate magnet link to the first & for transmission-remote compatibility
@@ -156,7 +167,7 @@ func (s *torrentService) AddMagnet(ctx context.Context, magnetURI string) (*mode
 	}
 
 	// Add to Transmission
-	cmd := exec.Command("transmission-remote", "-a", transmissionURI, "-w", s.config.DownloadDir)
+	cmd := exec.Command("transmission-remote", "-a", transmissionURI, "-w", torrentDir)
 	if err := cmd.Run(); err != nil {
 		return nil, fmt.Errorf("failed to add torrent to transmission: %w", err)
 	}
@@ -368,7 +379,7 @@ func (s *torrentService) trackTorrentDownload(ctx context.Context, downloadID st
 					if largestFile != nil {
 						filename := filepath.Base(largestFile.Name)
 						meta := fileparser.ParseFilename(filename)
-						finalPath := filepath.Join(s.config.DownloadDir, largestFile.Name)
+						finalPath := filepath.Join(s.getTorrentDownloadDir(), largestFile.Name)
 
 						dl.Title = meta.Title
 						dl.DestPath = finalPath
@@ -405,25 +416,14 @@ func (s *torrentService) trackTorrentDownload(ctx context.Context, downloadID st
 						_ = s.downloadRepo.Update(dl)
 
 						if job.ProgressPct >= 100.0 {
-							slog.Info("Torrent download complete, moving file", "title", dl.Title)
+							slog.Info("Torrent download complete", "title", dl.Title, "path", dl.DestPath)
 
-							destPath := getUniqueFilePath(s.getMediaDir(), filepath.Base(dl.DestPath))
-							err := moveFile(dl.DestPath, destPath)
-							if err != nil {
-								slog.Error("Failed to move completed torrent file", "err", err)
-								dl.Status = model.DownloadStatusFailed
-								_ = s.downloadRepo.Update(dl)
-								s.removeActive(downloadID)
-								return
-							}
-
-							dl.DestPath = destPath
 							dl.Status = model.DownloadStatusCompleted
 							dl.Progress = 100.0
 							_ = s.downloadRepo.Update(dl)
 
-							// Clean up Transmission job and temporary files
-							_ = exec.Command("transmission-remote", "-t", at.transmissionID, "-rad").Run()
+							// Clean up Transmission job (remove from Transmission daemon without deleting downloaded data)
+							_ = exec.Command("transmission-remote", "-t", at.transmissionID, "-r").Run()
 
 							s.removeActive(downloadID)
 							slog.Info("Torrent download complete, triggering directory scan", "title", dl.Title)

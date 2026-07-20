@@ -15,6 +15,7 @@ type StreamService interface {
 	GetThumbnailStream(ctx context.Context, mediaID string) (*os.File, error)
 	GetScrubberStatus(ctx context.Context, mediaID string) (int, error)
 	GetScrubberImage(ctx context.Context, mediaID string, frame int) (*os.File, error)
+	UpdateProgress(ctx context.Context, mediaID string, position int) error
 }
 
 type streamService struct {
@@ -23,6 +24,10 @@ type streamService struct {
 
 func NewStreamService(repo repository.MediaRepository) StreamService {
 	return &streamService{repo: repo}
+}
+
+func (s *streamService) UpdateProgress(ctx context.Context, mediaID string, position int) error {
+	return s.repo.UpdateProgress(mediaID, position)
 }
 
 // GetVideoStream resolves the media file path and returns a read-seekable handle to the file.
