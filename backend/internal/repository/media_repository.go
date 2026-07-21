@@ -12,6 +12,7 @@ type MediaRepository interface {
 	Create(media *model.Media) error
 	Update(media *model.Media) error
 	UpdateProgress(id string, position int) error
+	SetDefaultStartTime(id string, startTime int) error
 	Delete(id string) error
 	Count() (int, error)
 	TotalSize() (int64, error)

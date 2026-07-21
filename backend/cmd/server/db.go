@@ -75,6 +75,21 @@ func setupDatabase(cfg *config.Config) (*sql.DB, error) {
 		}
 	}
 
+	// Try to read clips & categories migration
+	clipsCategoriesMigrationPaths := []string{
+		"migrations/006_clips_and_categories.sql",
+		"../../migrations/006_clips_and_categories.sql",
+		"../migrations/006_clips_and_categories.sql",
+		"backend/migrations/006_clips_and_categories.sql",
+	}
+	var clipsCategoriesMigrationSQL []byte
+	for _, path := range clipsCategoriesMigrationPaths {
+		clipsCategoriesMigrationSQL, _ = os.ReadFile(path)
+		if clipsCategoriesMigrationSQL != nil {
+			break
+		}
+	}
+
 	db, err := sqlite.Connect(cfg.DatabasePath, string(migrationSQL))
 	if err != nil {
 		return nil, err
@@ -99,8 +114,47 @@ func setupDatabase(cfg *config.Config) (*sql.DB, error) {
 		}
 	}
 
-	// Always ensure last_position column exists on media table
+	if len(clipsCategoriesMigrationSQL) > 0 {
+		if _, migErr := db.Exec(string(clipsCategoriesMigrationSQL)); migErr != nil {
+			slog.Debug("Clips & Categories migration skipped (likely already applied)", "err", migErr)
+		}
+	}
+
+	// Try to read media_categories migration
+	mediaCategoriesMigrationPaths := []string{
+		"migrations/007_media_categories.sql",
+		"../../migrations/007_media_categories.sql",
+		"../migrations/007_media_categories.sql",
+		"backend/migrations/007_media_categories.sql",
+	}
+	for _, path := range mediaCategoriesMigrationPaths {
+		if sqlBytes, readErr := os.ReadFile(path); readErr == nil && len(sqlBytes) > 0 {
+			if _, migErr := db.Exec(string(sqlBytes)); migErr != nil {
+				slog.Debug("Media Categories migration skipped (likely already applied)", "err", migErr)
+			}
+			break
+		}
+	}
+
+	// Try to read users & watch history migration
+	usersMigrationPaths := []string{
+		"migrations/008_users_and_watch_history.sql",
+		"../../migrations/008_users_and_watch_history.sql",
+		"../migrations/008_users_and_watch_history.sql",
+		"backend/migrations/008_users_and_watch_history.sql",
+	}
+	for _, path := range usersMigrationPaths {
+		if sqlBytes, readErr := os.ReadFile(path); readErr == nil && len(sqlBytes) > 0 {
+			if _, migErr := db.Exec(string(sqlBytes)); migErr != nil {
+				slog.Debug("Users & Watch history migration skipped (likely already applied)", "err", migErr)
+			}
+			break
+		}
+	}
+
+	// Always ensure last_position and default_start_time columns exist on media table
 	_, _ = db.Exec(`ALTER TABLE media ADD COLUMN last_position INTEGER NOT NULL DEFAULT 0;`)
+	_, _ = db.Exec(`ALTER TABLE media ADD COLUMN default_start_time INTEGER NOT NULL DEFAULT 0;`)
 
 	return db, nil
 }

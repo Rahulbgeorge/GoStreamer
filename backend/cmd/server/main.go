@@ -46,6 +46,8 @@ func main() {
 	mediaRepo := sqlite.NewMediaRepository(db)
 	prefRepo := sqlite.NewPreferenceRepository(db)
 	downloadRepo := sqlite.NewDownloadRepository(db)
+	categoryRepo := sqlite.NewCategoryRepository(db)
+	clipRepo := sqlite.NewClipRepository(db)
 
 	streamService := service.NewStreamService(mediaRepo)
 	scannerService := service.NewScannerService(cfg, mediaRepo, prefRepo)
@@ -60,13 +62,15 @@ func main() {
 	youtubeDownloader := service.NewYoutubeDownloader(cfg, downloadRepo, prefRepo, scannerService)
 	youtubeCtrl := controller.NewYoutubeController(cfg, youtubeDownloader, mediaRepo, prefRepo, downloadRepo, scannerService)
 
-	mediaCtrl := controller.NewMediaController(mediaRepo, scannerService)
+	mediaCtrl := controller.NewMediaController(mediaRepo, scannerService, cfg)
 	streamCtrl := controller.NewStreamController(streamService, cfg)
 	uploadCtrl := controller.NewUploadController(uploadService)
 	torrentCtrl := controller.NewTorrentController(torrentService)
 	prefCtrl := controller.NewPreferenceController(prefRepo)
 	systemCtrl := controller.NewSystemController()
 	downloadCtrl := controller.NewDownloadController(downloadRepo, torrentService)
+	categoryCtrl := controller.NewCategoryController(categoryRepo)
+	clipCtrl := controller.NewClipController(cfg, clipRepo, mediaRepo)
 
 	// 5. Start file auto-discovery services
 	ctx, cancel := context.WithCancel(context.Background())
@@ -79,7 +83,7 @@ func main() {
 	defer scannerService.Stop()
 
 	// 6. Setup Gin Router
-	router := setupRouter(cfg, mediaCtrl, streamCtrl, uploadCtrl, torrentCtrl, youtubeCtrl, prefCtrl, systemCtrl, downloadCtrl)
+	router := setupRouter(cfg, mediaCtrl, streamCtrl, uploadCtrl, torrentCtrl, youtubeCtrl, prefCtrl, systemCtrl, downloadCtrl, categoryCtrl, clipCtrl)
 
 	srv := &http.Server{
 		Addr:    ":" + cfg.ServerPort,

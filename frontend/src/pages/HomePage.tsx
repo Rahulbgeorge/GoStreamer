@@ -1,12 +1,14 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Media, LibraryStats } from '../types/media';
+import { Media, LibraryStats, Category, Clip } from '../types/media';
 import { mediaService } from '../services/mediaService';
 import { SearchBar } from '../components/SearchBar';
 import { HeroBanner } from '../components/HeroBanner';
 import { MediaRow } from '../components/MediaRow';
+import { MediaCard } from '../components/MediaCard';
 import { DetailPage } from './DetailPage';
 import { AdminPage } from './AdminPage';
+import { CategoryPage } from './CategoryPage';
 import { EditModal } from '../components/EditModal';
 import { UploadModal } from '../components/UploadModal';
 import { VideoPlayer } from '../components/VideoPlayer';
@@ -17,6 +19,8 @@ import './HomePage.css';
 export const HomePage: React.FC = () => {
   const { t } = useTranslation();
   const [movies, setMovies] = useState<Media[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [clips, setClips] = useState<Clip[]>([]);
   const [stats, setStats] = useState<LibraryStats>({ count: 0, total_size: 0 });
   const [loading, setLoading] = useState(true);
   const [selectedMedia, setSelectedMedia] = useState<Media | null>(null);
@@ -27,7 +31,12 @@ export const HomePage: React.FC = () => {
   const [isEditing, setIsEditing] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [isAdminPage, setIsAdminPage] = useState(false);
+  const [isCategoryPage, setIsCategoryPage] = useState(false);
   const [activeVideo, setActiveVideo] = useState<Media | null>(null);
+  const [playingClip, setPlayingClip] = useState<Clip | null>(null);
+
+  // Home Page Category & Language Filter state
+  const [activeFilter, setActiveFilter] = useState<string>('all');
 
   const fetchLibraryData = async () => {
     try {
@@ -35,6 +44,12 @@ export const HomePage: React.FC = () => {
       setMovies(data);
       const libraryStats = await mediaService.getStats();
       setStats(libraryStats);
+
+      const catsData = await mediaService.getCategories();
+      setCategories(catsData);
+
+      const clipsData = await mediaService.getClips();
+      setClips(clipsData);
     } catch (err) {
       console.error("Failed to load catalog data", err);
     } finally {
@@ -101,7 +116,7 @@ export const HomePage: React.FC = () => {
 
       if (e.key === 'ArrowRight') {
         if (focusedRow === 'header') {
-          setFocusedIndex(prev => isTv ? 0 : Math.min(prev + 1, 2));
+          setFocusedIndex(prev => isTv ? 0 : Math.min(prev + 1, 3));
         } else if (focusedRow === 'recent' || focusedRow === 'grid') {
           setFocusedIndex(prev => Math.min(prev + 1, movies.length - 1));
         }
@@ -130,8 +145,11 @@ export const HomePage: React.FC = () => {
             (document.querySelector('.search-bar input') as HTMLInputElement)?.focus();
           } else if (focusedIndex === 1) {
             e.preventDefault();
-            setIsUploading(true);
+            setIsCategoryPage(true);
           } else if (focusedIndex === 2) {
+            e.preventDefault();
+            setIsUploading(true);
+          } else if (focusedIndex === 3) {
             e.preventDefault();
             setIsAdminPage(true);
           }
@@ -183,8 +201,52 @@ export const HomePage: React.FC = () => {
     }
   };
 
+  // Extract unique languages dynamically from catalog
+  const availableLanguages = useMemo(() => {
+    const langs = new Set<string>();
+    movies.forEach(m => {
+      if (m.language && m.language.trim() !== '') {
+        langs.add(m.language.trim().toLowerCase());
+      }
+    });
+    return Array.from(langs);
+  }, [movies]);
+
+  // Filter movies based on active category / language filter
+  const displayedMovies = useMemo(() => {
+    if (activeFilter === 'all' || activeFilter === 'clips') return movies;
+    if (activeFilter.startsWith('lang:')) {
+      const targetLang = activeFilter.replace('lang:', '').toLowerCase();
+      return movies.filter(m => m.language.toLowerCase() === targetLang);
+    }
+    if (activeFilter.startsWith('cat:')) {
+      const catId = activeFilter.replace('cat:', '');
+      const catObj = categories.find(c => c.id === catId);
+      const catName = catObj ? catObj.name.toLowerCase() : '';
+      return movies.filter(m => 
+        (m.genre && m.genre.toLowerCase().includes(catName)) ||
+        clips.some(clip => clip.media_id === m.id && clip.category_ids?.includes(catId))
+      );
+    }
+    return movies;
+  }, [movies, activeFilter, categories, clips]);
+
+  // Filter clips based on active category filter
+  const displayedClips = useMemo(() => {
+    if (activeFilter === 'clips') return clips;
+    if (activeFilter.startsWith('cat:')) {
+      const catId = activeFilter.replace('cat:', '');
+      return clips.filter(c => c.category_ids?.includes(catId));
+    }
+    return clips;
+  }, [clips, activeFilter]);
+
   if (isAdminPage) {
     return <AdminPage onBack={() => setIsAdminPage(false)} />;
+  }
+
+  if (isCategoryPage) {
+    return <CategoryPage onBack={() => setIsCategoryPage(false)} onSelectMedia={(m) => { setSelectedMedia(m); setIsCategoryPage(false); }} />;
   }
 
   const heroMovie = movies.length > 0 ? movies[0] : null;
@@ -203,13 +265,19 @@ export const HomePage: React.FC = () => {
             isFocused={focusedRow === 'header' && focusedIndex === 0} 
           />
           <button 
-            className={`btn-action admin ${focusedRow === 'header' && focusedIndex === 1 ? 'focused' : ''}`} 
+            className={`btn-action categories-btn ${focusedRow === 'header' && focusedIndex === 1 ? 'focused' : ''}`} 
+            onClick={() => setIsCategoryPage(true)}
+          >
+            📂 Categories
+          </button>
+          <button 
+            className={`btn-action admin ${focusedRow === 'header' && focusedIndex === 2 ? 'focused' : ''}`} 
             onClick={() => setIsUploading(true)}
           >
             📤 {t('admin')}
           </button>
           <button 
-            className={`btn-action tasks-dashboard ${focusedRow === 'header' && focusedIndex === 2 ? 'focused' : ''}`} 
+            className={`btn-action tasks-dashboard ${focusedRow === 'header' && focusedIndex === 3 ? 'focused' : ''}`} 
             onClick={() => setIsAdminPage(true)}
           >
             ⚡ Tasks & Downloads
@@ -223,12 +291,72 @@ export const HomePage: React.FC = () => {
         <span><strong>{t('statsSize')}:</strong> {(stats.total_size / (1024 * 1024 * 1024)).toFixed(2)} GB</span>
       </div>
 
+      {/* Category & Language Navigation Filter Bar */}
+      <div className="home-category-bar">
+        <div className="filter-group">
+          <span className="filter-group-title">🎬 Catalogs:</span>
+          <button 
+            className={`home-cat-pill ${activeFilter === 'all' ? 'active' : ''}`}
+            onClick={() => setActiveFilter('all')}
+          >
+            All Movies ({movies.length})
+          </button>
+          {clips.length > 0 && (
+            <button 
+              className={`home-cat-pill ${activeFilter === 'clips' ? 'active' : ''}`}
+              onClick={() => setActiveFilter('clips')}
+            >
+              ✂️ Clips ({clips.length})
+            </button>
+          )}
+        </div>
+
+        {/* Language Categories */}
+        {availableLanguages.length > 0 && (
+          <div className="filter-group">
+            <span className="filter-group-title">🌐 Languages:</span>
+            {availableLanguages.map(lang => {
+              const langKey = `lang:${lang}`;
+              const count = movies.filter(m => m.language.toLowerCase() === lang).length;
+              return (
+                <button 
+                  key={lang}
+                  className={`home-cat-pill ${activeFilter === langKey ? 'active' : ''}`}
+                  onClick={() => setActiveFilter(langKey)}
+                >
+                  {lang.toUpperCase()} ({count})
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Database Categories (Songs, Highlights, Action, etc.) */}
+        {categories.length > 0 && (
+          <div className="filter-group">
+            <span className="filter-group-title">🏷️ Categories:</span>
+            {categories.map(cat => {
+              const catKey = `cat:${cat.id}`;
+              return (
+                <button 
+                  key={cat.id}
+                  className={`home-cat-pill ${activeFilter === catKey ? 'active' : ''}`}
+                  onClick={() => setActiveFilter(catKey)}
+                >
+                  {cat.name}
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
       {loading ? (
         <div className="loading-spinner">Loading catalogs...</div>
       ) : (
         <>
           {/* Main Hero Movie spotlight Banner */}
-          {heroMovie && (
+          {heroMovie && activeFilter === 'all' && (
             <HeroBanner 
               media={heroMovie} 
               onPlay={(m) => setActiveVideo(m)}
@@ -236,61 +364,84 @@ export const HomePage: React.FC = () => {
             />
           )}
 
-          {movies.length === 0 ? (
-            <div className="no-movies-fallback">
-              <p>{t('noMovies')}</p>
-            </div>
-          ) : (
-            <div className="movie-catalogs">
-              {/* Recently added scroll view */}
-              <MediaRow 
-                title={t('recentlyAdded')} 
-                items={movies} 
-                onSelect={(m) => setSelectedMedia(m)} 
-                focusedIndex={focusedIndex}
-                isFocusedRow={focusedRow === 'recent'}
-              />
-              
-              {/* Main movie catalog grids */}
-              <div className="all-movies-grid-section">
-                <h3>{t('allMovies')}</h3>
-                <div className="all-movies-grid">
-                  {movies.map((movie, idx) => {
-                    const isFocused = focusedRow === 'grid' && focusedIndex === idx;
-                    const formatBytes = (bytes: number) => {
-                      if (bytes <= 0) return '0.00 GB';
-                      if (bytes >= 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-                      return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-                    };
-                    return (
-                      <div 
-                        key={movie.id} 
-                        onClick={() => setSelectedMedia(movie)} 
-                        className={`grid-movie-card ${isFocused ? 'focused' : ''}`}
-                      >
-                        <div className="grid-poster-wrap">
-                          {movie.thumbnail_path ? (
-                            <img src={mediaService.getThumbnailUrl(movie.id)} alt={movie.title} />
-                          ) : (
-                            <div className="fallback-grid-poster">
-                              <span>{movie.title.slice(0, 2).toUpperCase()}</span>
-                            </div>
-                          )}
-                          {movie.quality && <span className="quality-badge">{movie.quality.toUpperCase()}</span>}
-                        </div>
-                        <div className="grid-info-wrap">
-                          <h4>{movie.title}</h4>
-                          <div className="grid-meta-wrap">
-                            {movie.year > 0 && <span className="grid-year">{movie.year}</span>}
-                            {isFocused && <span className="grid-size">{formatBytes(movie.file_size)}</span>}
-                          </div>
+          {/* Clips Showcase Section if clips tab or category is active */}
+          {(activeFilter === 'clips' || activeFilter.startsWith('cat:')) && displayedClips.length > 0 && (
+            <div className="home-clips-section">
+              <h3>✂️ Featured Video Clips ({displayedClips.length})</h3>
+              <div className="home-clips-grid">
+                {displayedClips.map(clip => {
+                  const parentMedia = movies.find(m => m.id === clip.media_id);
+                  const formatSecs = (secs: number) => {
+                    const m = Math.floor(secs / 60);
+                    const s = Math.floor(secs % 60);
+                    return `${m}:${s.toString().padStart(2, '0')}`;
+                  };
+                  return (
+                    <div key={clip.id} className="home-clip-card" onClick={() => setPlayingClip(clip)}>
+                      <div className="home-clip-poster">
+                        {clip.thumbnail_path ? (
+                          <img src={mediaService.getClipThumbnailUrl(clip.id)} alt={clip.title} />
+                        ) : (
+                          <div className="fallback-clip-poster">🎬</div>
+                        )}
+                        <span className="play-overlay-icon">▶</span>
+                        <span className="home-clip-duration">
+                          {formatSecs(clip.start_time)} - {formatSecs(clip.end_time)}
+                        </span>
+                      </div>
+                      <div className="home-clip-info">
+                        <h4>{clip.title}</h4>
+                        {parentMedia && <p className="parent-title">🎥 {parentMedia.title}</p>}
+                        <div className="home-clip-categories">
+                          {clip.categories?.map(c => (
+                            <span key={c.id} className="home-cat-badge">{c.name}</span>
+                          ))}
                         </div>
                       </div>
-                    );
-                  })}
-                </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
+          )}
+
+          {displayedMovies.length === 0 && (activeFilter !== 'clips' || displayedClips.length === 0) ? (
+            <div className="no-movies-fallback">
+              <p>No video or clip found under this filter category.</p>
+              <button className="btn-reset-filter" onClick={() => setActiveFilter('all')}>Show All Movies</button>
+            </div>
+          ) : (
+            activeFilter !== 'clips' && (
+              <div className="movie-catalogs">
+                {/* Recently added scroll view */}
+                {activeFilter === 'all' && (
+                  <MediaRow 
+                    title={t('recentlyAdded')} 
+                    items={displayedMovies} 
+                    onSelect={(m) => setSelectedMedia(m)} 
+                    focusedIndex={focusedIndex}
+                    isFocusedRow={focusedRow === 'recent'}
+                  />
+                )}
+                
+                {/* Main movie catalog grids */}
+                <div className="all-movies-grid-section">
+                  <h3>
+                    {activeFilter === 'all' ? t('allMovies') : `Filtered Catalog (${displayedMovies.length})`}
+                  </h3>
+                  <div className="all-movies-grid">
+                    {displayedMovies.map((movie, idx) => (
+                      <MediaCard 
+                        key={movie.id} 
+                        media={movie} 
+                        onSelect={(m) => setSelectedMedia(m)} 
+                        focused={focusedRow === 'grid' && focusedIndex === idx}
+                      />
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )
           )}
         </>
       )}
@@ -302,7 +453,21 @@ export const HomePage: React.FC = () => {
           src={mediaService.getStreamUrl(activeVideo.id)}
           type={activeVideo.mime_type}
           poster={activeVideo.thumbnail_path ? mediaService.getThumbnailUrl(activeVideo.id) : undefined}
+          startTime={activeVideo.default_start_time || activeVideo.last_position || 0}
           onBack={() => setActiveVideo(null)}
+        />
+      )}
+
+      {/* Clip player screen overlay */}
+      {playingClip && (
+        <VideoPlayer 
+          mediaId={playingClip.media_id}
+          src={mediaService.getStreamUrl(playingClip.media_id)}
+          type="video/mp4"
+          poster={playingClip.thumbnail_path ? mediaService.getClipThumbnailUrl(playingClip.id) : undefined}
+          startTime={playingClip.start_time}
+          endTime={playingClip.end_time}
+          onBack={() => setPlayingClip(null)}
         />
       )}
 

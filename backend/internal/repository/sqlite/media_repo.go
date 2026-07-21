@@ -35,7 +35,7 @@ func NewMediaRepository(db *sql.DB) *MediaRepo {
 
 // columns is the standard column list for SELECT queries.
 const columns = `id, title, original_name, year, quality, genre, file_path, file_size, 
-	duration, mime_type, thumbnail_path, status, source, language, last_position, 
+	duration, mime_type, thumbnail_path, status, source, language, last_position, default_start_time, 
 	created_at, updated_at`
 
 // scanMedia scans a single row into a model.Media struct.
@@ -45,7 +45,7 @@ func scanMedia(scanner interface{ Scan(dest ...any) error }) (*model.Media, erro
 
 	err := scanner.Scan(
 		&m.ID, &m.Title, &m.OriginalName, &m.Year, &m.Quality, &m.Genre, &m.FilePath, &m.FileSize,
-		&m.Duration, &m.MimeType, &m.ThumbnailPath, &m.Status, &m.Source, &m.Language, &m.LastPosition,
+		&m.Duration, &m.MimeType, &m.ThumbnailPath, &m.Status, &m.Source, &m.Language, &m.LastPosition, &m.DefaultStartTime,
 		&createdAtStr, &updatedAtStr,
 	)
 	if err != nil {
@@ -98,15 +98,27 @@ func (r *MediaRepo) flushProgressToDB() {
 
 	nowStr := time.Now().UTC().Format(time.RFC3339)
 	stmt, err := r.db.Prepare(`UPDATE media SET last_position = ?, updated_at = ? WHERE id = ?`)
-	if err != nil {
-		slog.Error("Failed to prepare progress update statement", "err", err)
-		return
+	if err == nil {
+		defer stmt.Close()
 	}
-	defer stmt.Close()
+
+	histStmt, histErr := r.db.Prepare(`
+		INSERT INTO watch_history (user_id, media_id, last_position, updated_at) 
+		VALUES ('user_default', ?, ?, ?) 
+		ON CONFLICT(user_id, media_id) DO UPDATE SET last_position = excluded.last_position, updated_at = excluded.updated_at
+	`)
+	if histErr == nil {
+		defer histStmt.Close()
+	}
 
 	for id, pos := range dirty {
-		if _, err := stmt.Exec(pos, nowStr, id); err != nil {
-			slog.Error("Failed to flush media playback progress to DB", "id", id, "pos", pos, "err", err)
+		if stmt != nil {
+			if _, execErr := stmt.Exec(pos, nowStr, id); execErr != nil {
+				slog.Error("Failed to flush media playback progress to DB", "id", id, "pos", pos, "err", execErr)
+			}
+		}
+		if histStmt != nil {
+			_, _ = histStmt.Exec(id, pos, nowStr)
 		}
 	}
 	slog.Debug("Flushed media playback progress to DB", "count", len(dirty))
@@ -278,11 +290,11 @@ func (r *MediaRepo) Create(m *model.Media) error {
 	_, err := r.db.Exec(`
 		INSERT INTO media (
 			id, title, original_name, year, quality, genre, file_path, file_size, 
-			duration, mime_type, thumbnail_path, status, source, language, last_position, 
+			duration, mime_type, thumbnail_path, status, source, language, last_position, default_start_time, 
 			created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		m.ID, m.Title, m.OriginalName, m.Year, m.Quality, m.Genre, m.FilePath, m.FileSize,
-		m.Duration, m.MimeType, m.ThumbnailPath, m.Status, m.Source, m.Language, m.LastPosition,
+		m.Duration, m.MimeType, m.ThumbnailPath, m.Status, m.Source, m.Language, m.LastPosition, m.DefaultStartTime,
 		m.CreatedAt.Format(time.RFC3339), m.UpdatedAt.Format(time.RFC3339),
 	)
 	if err != nil {
@@ -320,11 +332,11 @@ func (r *MediaRepo) Update(m *model.Media) error {
 		UPDATE media SET 
 			title = ?, original_name = ?, year = ?, quality = ?, genre = ?, file_path = ?, 
 			file_size = ?, duration = ?, mime_type = ?, thumbnail_path = ?, 
-			status = ?, source = ?, language = ?, last_position = ?, updated_at = ?
+			status = ?, source = ?, language = ?, last_position = ?, default_start_time = ?, updated_at = ?
 		WHERE id = ?`,
 		m.Title, m.OriginalName, m.Year, m.Quality, m.Genre, m.FilePath, m.FileSize,
 		m.Duration, m.MimeType, m.ThumbnailPath, m.Status, m.Source, m.Language,
-		m.LastPosition, m.UpdatedAt.Format(time.RFC3339), m.ID,
+		m.LastPosition, m.DefaultStartTime, m.UpdatedAt.Format(time.RFC3339), m.ID,
 	)
 	if err != nil {
 		return fmt.Errorf("update media %s: %w", m.ID, err)
@@ -366,6 +378,31 @@ func (r *MediaRepo) UpdateProgress(id string, position int) error {
 		for i := range r.list {
 			if r.list[i].ID == id {
 				r.list[i].LastPosition = position
+				break
+			}
+		}
+	}
+	r.mu.Unlock()
+
+	return nil
+}
+
+// SetDefaultStartTime updates the default auto-playing start position for a video in DB and write-through RAM cache.
+func (r *MediaRepo) SetDefaultStartTime(id string, startTime int) error {
+	nowStr := time.Now().UTC().Format(time.RFC3339)
+	_, err := r.db.Exec(`UPDATE media SET default_start_time = ?, updated_at = ? WHERE id = ?`, startTime, nowStr, id)
+	if err != nil {
+		return fmt.Errorf("update default_start_time for media %s: %w", id, err)
+	}
+
+	r.mu.Lock()
+	if r.initialized {
+		if item, found := r.items[id]; found {
+			item.DefaultStartTime = startTime
+		}
+		for i := range r.list {
+			if r.list[i].ID == id {
+				r.list[i].DefaultStartTime = startTime
 				break
 			}
 		}

@@ -42,10 +42,11 @@ type Media struct {
 	ThumbnailPath string      `json:"thumbnail_path"`
 	Status        MediaStatus `json:"status"`
 	Source        MediaSource `json:"source"`
-	Language      string      `json:"language"`      // e.g. "en", "hi"
-	LastPosition  int         `json:"last_position"` // last watched position in seconds
-	CreatedAt     time.Time   `json:"created_at"`
-	UpdatedAt     time.Time   `json:"updated_at"`
+	Language         string      `json:"language"`           // e.g. "en", "hi"
+	LastPosition     int         `json:"last_position"`      // last watched position in seconds
+	DefaultStartTime int         `json:"default_start_time"` // default auto-playing start position in seconds
+	CreatedAt        time.Time   `json:"created_at"`
+	UpdatedAt        time.Time   `json:"updated_at"`
 }
 
 // Validate verifies domain integrity constraints before save/update operations.

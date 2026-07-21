@@ -86,7 +86,7 @@ func NewTorrentService(
 	}
 
 	// Verify transmission-remote is available on the system
-	if err := exec.Command("transmission-remote", "-l").Run(); err != nil {
+	if err := runTransmissionCmd("-l").Run(); err != nil {
 		slog.Warn("transmission-remote check failed. Ensure transmission-daemon is installed and running.", "err", err)
 	}
 
@@ -160,14 +160,8 @@ func (s *torrentService) AddMagnet(ctx context.Context, magnetURI string) (*mode
 		DestPath:      filepath.Join(torrentDir, "pending-"+hash),
 	}
 
-	// Clean/truncate magnet link to the first & for transmission-remote compatibility
-	transmissionURI := magnetURI
-	if idx := strings.Index(transmissionURI, "&"); idx != -1 {
-		transmissionURI = transmissionURI[:idx]
-	}
-
-	// Add to Transmission
-	cmd := exec.Command("transmission-remote", "-a", transmissionURI, "-w", torrentDir)
+	// Add to Transmission using whole magnet link
+	cmd := runTransmissionCmd("-a", magnetURI, "-w", torrentDir)
 	if err := cmd.Run(); err != nil {
 		return nil, fmt.Errorf("failed to add torrent to transmission: %w", err)
 	}
@@ -317,7 +311,7 @@ func (s *torrentService) CancelTorrent(downloadID string) error {
 	}
 
 	if at != nil && at.transmissionID != "" {
-		_ = exec.Command("transmission-remote", "-t", at.transmissionID, "-rad").Run()
+		_ = runTransmissionCmd("-t", at.transmissionID, "-rad").Run()
 	}
 
 	dl.Status = model.DownloadStatusCancelled
@@ -423,7 +417,7 @@ func (s *torrentService) trackTorrentDownload(ctx context.Context, downloadID st
 							_ = s.downloadRepo.Update(dl)
 
 							// Clean up Transmission job (remove from Transmission daemon without deleting downloaded data)
-							_ = exec.Command("transmission-remote", "-t", at.transmissionID, "-r").Run()
+							_ = runTransmissionCmd("-t", at.transmissionID, "-r").Run()
 
 							s.removeActive(downloadID)
 							slog.Info("Torrent download complete, triggering directory scan", "title", dl.Title)
@@ -510,7 +504,7 @@ type TransmissionJob struct {
 }
 
 func (s *torrentService) queryTransmissionList() (map[string]*TransmissionJob, error) {
-	cmd := exec.Command("transmission-remote", "-l")
+	cmd := runTransmissionCmd("-l")
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, err
@@ -609,7 +603,7 @@ type TorrentFile struct {
 }
 
 func getTorrentFiles(transmissionID string) ([]TorrentFile, error) {
-	cmd := exec.Command("transmission-remote", "-t", transmissionID, "-f")
+	cmd := runTransmissionCmd("-t", transmissionID, "-f")
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, err
@@ -671,7 +665,7 @@ func parseSizeToBytes(sizeStr string, unit string) int64 {
 }
 
 func getPeerCount(transmissionID string) int {
-	cmd := exec.Command("transmission-remote", "-t", transmissionID, "-i")
+	cmd := runTransmissionCmd("-t", transmissionID, "-i")
 	out, err := cmd.Output()
 	if err != nil {
 		return 0
@@ -724,7 +718,7 @@ func parseSpeedBps(speedStr string) float64 {
 }
 
 func getTorrentHashFromInfo(transmissionID string) (string, error) {
-	cmd := exec.Command("transmission-remote", "-t", transmissionID, "-i")
+	cmd := runTransmissionCmd("-t", transmissionID, "-i")
 	out, err := cmd.Output()
 	if err != nil {
 		return "", err
@@ -797,3 +791,20 @@ func (s *torrentService) ScanHTML(ctx context.Context, pageURL string) ([]Torren
 
 	return targets, nil
 }
+
+func runTransmissionCmd(args ...string) *exec.Cmd {
+	var formattedArgs []string
+	for _, arg := range args {
+		if strings.ContainsAny(arg, " &?\"'$`()|<>;*{}[]\\") {
+			formattedArgs = append(formattedArgs, `"`+strings.ReplaceAll(arg, `"`, `\"`)+`"`)
+		} else {
+			formattedArgs = append(formattedArgs, arg)
+		}
+	}
+	fullCmd := "transmission-remote " + strings.Join(formattedArgs, " ")
+	logMsg := fmt.Sprintf("command [transmission] : %s", fullCmd)
+	slog.Info(logMsg)
+	fmt.Println(logMsg)
+	return exec.Command("transmission-remote", args...)
+}
+

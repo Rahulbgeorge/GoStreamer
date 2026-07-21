@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Media } from '../types/media';
 import { mediaService } from '../services/mediaService';
@@ -12,7 +12,8 @@ interface MediaCardProps {
 
 export const MediaCard: React.FC<MediaCardProps> = ({ media, onSelect, focused }) => {
   const { t } = useTranslation();
-  const posterUrl = media.thumbnail_path ? mediaService.getThumbnailUrl(media.id) : '';
+  const [imgError, setImgError] = useState(false);
+  const posterUrl = !imgError ? mediaService.getThumbnailUrl(media.id, media.updated_at) : '';
 
   const formatBytes = (bytes: number) => {
     if (bytes <= 0) return '0.00 GB';
@@ -24,7 +25,12 @@ export const MediaCard: React.FC<MediaCardProps> = ({ media, onSelect, focused }
     <div className={`media-card ${focused ? 'focused' : ''}`} onClick={() => onSelect(media)}>
       <div className="card-image-wrapper">
         {posterUrl ? (
-          <img src={posterUrl} alt={media.title} className="card-image" />
+          <img 
+            src={posterUrl} 
+            alt={media.title} 
+            className="card-image" 
+            onError={() => setImgError(true)}
+          />
         ) : (
           <div className="card-image-fallback">
             <span>{media.title.slice(0, 2).toUpperCase()}</span>

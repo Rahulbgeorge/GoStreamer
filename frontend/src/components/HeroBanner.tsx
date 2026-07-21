@@ -12,7 +12,7 @@ interface HeroBannerProps {
 
 export const HeroBanner: React.FC<HeroBannerProps> = ({ media, onPlay, onInfo }) => {
   const { t } = useTranslation();
-  const backdropUrl = media.thumbnail_path ? mediaService.getThumbnailUrl(media.id) : '';
+  const backdropUrl = media.thumbnail_path ? mediaService.getThumbnailUrl(media.id, media.updated_at) : '';
 
   return (
     <div 

@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import videojs from 'video.js';
 import 'video.js/dist/video-js.css';
+import { Media, Clip } from '../types/media';
 import { mediaService } from '../services/mediaService';
 import './VideoPlayer.css';
 
@@ -10,11 +11,45 @@ interface VideoPlayerProps {
   poster?: string;
   onBack?: () => void;
   mediaId: string;
+  startTime?: number;
+  endTime?: number;
+
+  // Clip Playlist & Sound-Only Mode Extensions
+  clipPlaylist?: Clip[];
+  initialClipIndex?: number;
+  allMediaList?: Media[];
+  categoryName?: string;
 }
 
-export const VideoPlayer: React.FC<VideoPlayerProps> = ({ src, type, poster, onBack, mediaId }) => {
+export const VideoPlayer: React.FC<VideoPlayerProps> = ({
+  src,
+  type,
+  poster,
+  onBack,
+  mediaId,
+  startTime,
+  endTime,
+  clipPlaylist = [],
+  initialClipIndex = 0,
+  allMediaList = [],
+  categoryName
+}) => {
   const videoRef = useRef<HTMLDivElement | null>(null);
   const playerRef = useRef<any>(null);
+
+  // Playlist state
+  const isPlaylist = clipPlaylist.length > 0;
+  const [clipIndex, setClipIndex] = useState<number>(initialClipIndex);
+  const currentClip = isPlaylist ? clipPlaylist[clipIndex] : null;
+
+  // Player Settings
+  const [repeatMode, setRepeatMode] = useState<'off' | 'all' | 'one'>('all');
+  const [soundOnly, setSoundOnly] = useState<boolean>(false);
+  const [isPlaying, setIsPlaying] = useState<boolean>(true);
+  const [currentTimeSec, setCurrentTimeSec] = useState<number>(0);
+  const [durationSec, setDurationSec] = useState<number>(0);
+
+  // Scrubber preview state
   const [scrubberReady, setScrubberReady] = useState(false);
   const [previewState, setPreviewState] = useState<{
     show: boolean;
@@ -30,13 +65,22 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ src, type, poster, onB
 
   const scrubberReadyRef = useRef(false);
   const scrubberIntervalRef = useRef(10);
+  const activeMediaId = currentClip ? currentClip.media_id : mediaId;
+  const activeSrc = currentClip ? mediaService.getStreamUrl(currentClip.media_id) : src;
+  const activeStartTime = currentClip ? currentClip.start_time : (startTime || 0);
+  const activeEndTime = currentClip ? currentClip.end_time : endTime;
 
-  // Poll or check scrubber status once on play
+  const parentMedia = currentClip ? allMediaList.find(m => m.id === currentClip.media_id) : null;
+  const activePoster = currentClip && currentClip.thumbnail_path
+    ? mediaService.getClipThumbnailUrl(currentClip.id)
+    : (parentMedia?.thumbnail_path ? mediaService.getThumbnailUrl(parentMedia.id) : poster);
+
+  // Poll scrubber status for active media
   useEffect(() => {
     let active = true;
     const checkScrubber = async () => {
       try {
-        const status = await mediaService.getScrubberStatus(mediaId);
+        const status = await mediaService.getScrubberStatus(activeMediaId);
         if (active && status.ready) {
           setScrubberReady(true);
           scrubberReadyRef.current = true;
@@ -50,252 +94,372 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ src, type, poster, onB
     return () => {
       active = false;
     };
-  }, [mediaId]);
+  }, [activeMediaId]);
 
+  // Video.js Initialization & Re-sync on clip index change
   useEffect(() => {
-    // Make sure Video.js player is initialized only once
-    if (!playerRef.current && videoRef.current) {
+    let player = playerRef.current;
+
+    if (!player && videoRef.current) {
       const videoElement = document.createElement('video-js');
       videoElement.classList.add('vjs-big-play-centered');
       videoElement.style.width = '100vw';
       videoElement.style.height = '100vh';
       videoRef.current.appendChild(videoElement);
 
-      const player = playerRef.current = videojs(videoElement, {
+      player = playerRef.current = videojs(videoElement, {
         controls: true,
         autoplay: true,
         preload: 'auto',
-        sources: [{ src, type }],
-        poster: poster,
+        sources: [{ src: activeSrc, type }],
+        poster: activePoster,
         fluid: false,
         playbackRates: [0.5, 1, 1.25, 1.5, 2]
       });
 
-      // Attach hover listener for seek previews
-      const progressControl = videoRef.current?.querySelector('.vjs-progress-control') as HTMLElement;
-      const playerContainer = videoRef.current;
-
-      let handleMouseMove: ((e: MouseEvent) => void) | null = null;
-      let handleMouseLeave: (() => void) | null = null;
-      let previewTimeoutId: any = null;
-
-      const showSeekPreview = (targetTime: number) => {
-        if (!player || !scrubberReadyRef.current) return;
-        if (previewTimeoutId) {
-          clearTimeout(previewTimeoutId);
-        }
-
-        const rect = progressControl?.getBoundingClientRect();
-        const containerRect = playerContainer?.getBoundingClientRect();
-        const duration = player.duration() || 0;
-
-        if (rect && containerRect && duration > 0) {
-          const pct = Math.max(0, Math.min(1, targetTime / duration));
-          const mins = Math.floor(targetTime / 60);
-          const secs = Math.floor(targetTime % 60);
-          const timeStr = `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-          
-          const frameNum = Math.floor(targetTime / scrubberIntervalRef.current) + 1;
-          const imgUrl = mediaService.getScrubberImageUrl(mediaId, frameNum);
-          
-          const xRel = rect.left - containerRect.left + (pct * rect.width);
-
-          setPreviewState({
-            show: true,
-            x: xRel,
-            time: timeStr,
-            imageUrl: imgUrl
-          });
-
-          // Hide preview after 1.5 seconds of inactivity
-          previewTimeoutId = setTimeout(() => {
-            setPreviewState(prev => ({ ...prev, show: false }));
-          }, 1500);
-        }
-      };
-
-      if (progressControl && playerContainer) {
-        handleMouseMove = (e: MouseEvent) => {
-          if (previewTimeoutId) {
-            clearTimeout(previewTimeoutId);
-          }
-          if (!playerRef.current || !scrubberReadyRef.current) return;
-          const rect = progressControl.getBoundingClientRect();
-          const containerRect = playerContainer.getBoundingClientRect();
-          
-          const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-          const duration = playerRef.current.duration() || 0;
-          const hoverTime = pct * duration;
-          
-          const mins = Math.floor(hoverTime / 60);
-          const secs = Math.floor(hoverTime % 60);
-          const timeStr = `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-          
-          const frameNum = Math.floor(hoverTime / scrubberIntervalRef.current) + 1;
-          const imgUrl = mediaService.getScrubberImageUrl(mediaId, frameNum);
-          
-          const xRel = e.clientX - containerRect.left;
-
-          setPreviewState({
-            show: true,
-            x: xRel,
-            time: timeStr,
-            imageUrl: imgUrl
-          });
-        };
-
-        handleMouseLeave = () => {
-          setPreviewState(prev => ({ ...prev, show: false }));
-        };
-
-        progressControl.addEventListener('mousemove', handleMouseMove);
-        progressControl.addEventListener('mouseleave', handleMouseLeave);
-      }
-
-      let isSeeking = false;
-      let targetSeekTime = 0;
-      let actualSeekTimeout: any = null;
-      let seekMultiplier = 1;
-      let lastSeekTime = 0;
-      let resetMultiplierTimeout: any = null;
-
-      // Simple keyboard short-cuts for TV D-pad / Player control (Space/Arrows)
-      const handleKeyDown = (e: KeyboardEvent) => {
-        if (e.code === 'Space') {
-          if (player.paused()) player.play();
-          else player.pause();
-        } else if (e.code === 'ArrowLeft' || e.code === 'ArrowRight') {
-          const now = Date.now();
-          const timeDiff = now - lastSeekTime;
-          lastSeekTime = now;
-
-          if (resetMultiplierTimeout) {
-            clearTimeout(resetMultiplierTimeout);
-          }
-
-          // Accelerate if consecutive seeks are triggered within 450ms
-          if (timeDiff < 450) {
-            seekMultiplier = Math.min(8, seekMultiplier + 1); // limit to 8x acceleration (80s per tap)
-          } else {
-            seekMultiplier = 1;
-          }
-
-          resetMultiplierTimeout = setTimeout(() => {
-            seekMultiplier = 1;
-          }, 800);
-
-          const duration = player.duration() || 0;
-
-          // Initialize targetSeekTime on starting seek session
-          if (!isSeeking) {
-            isSeeking = true;
-            targetSeekTime = player.currentTime() || 0;
-          }
-
-          const step = 10 * seekMultiplier;
-          if (e.code === 'ArrowLeft') {
-            targetSeekTime = Math.max(0, targetSeekTime - step);
-          } else {
-            targetSeekTime = Math.min(duration, targetSeekTime + step);
-          }
-
-          // Render seek preview thumbnail instantly
-          showSeekPreview(targetSeekTime);
-
-          // Debounce the actual video player seeking to avoid buffering lag
-          if (actualSeekTimeout) {
-            clearTimeout(actualSeekTimeout);
-          }
-
-          actualSeekTimeout = setTimeout(() => {
-            player.currentTime(targetSeekTime);
-            isSeeking = false;
-          }, 500); // 500ms after last arrow release, commit seek to player
-        } else if (e.code === 'Escape' || e.code === 'BrowserBack' || e.code === 'Backspace') {
-          if (onBack) onBack();
-        }
-      };
-
-      window.addEventListener('keydown', handleKeyDown);
-
-      playerRef.current.on('dispose', () => {
-        window.removeEventListener('keydown', handleKeyDown);
-        if (previewTimeoutId) clearTimeout(previewTimeoutId);
-        if (actualSeekTimeout) clearTimeout(actualSeekTimeout);
-        if (resetMultiplierTimeout) clearTimeout(resetMultiplierTimeout);
-        if (progressControl) {
-          if (handleMouseMove) progressControl.removeEventListener('mousemove', handleMouseMove);
-          if (handleMouseLeave) progressControl.removeEventListener('mouseleave', handleMouseLeave);
-        }
-      });
+      player.on('play', () => setIsPlaying(true));
+      player.on('pause', () => setIsPlaying(false));
+    } else if (player) {
+      player.src({ src: activeSrc, type });
+      if (activePoster) player.poster(activePoster);
     }
-  }, [src, type, poster, onBack, mediaId]);
 
-  // Dispose player on unmount
+    player.ready(() => {
+      if (activeStartTime > 0) {
+        player.currentTime(activeStartTime);
+      }
+      player.play().catch(() => {});
+    });
+
+    // Timeupdate listener for clip boundary enforcement & playlist auto-advance
+    const handleTimeUpdate = () => {
+      if (!playerRef.current) return;
+      const curr = playerRef.current.currentTime() || 0;
+      const dur = playerRef.current.duration() || 0;
+      setCurrentTimeSec(curr);
+      setDurationSec(dur);
+
+      if (typeof activeEndTime === 'number' && activeEndTime > 0 && curr >= activeEndTime) {
+        if (repeatMode === 'one') {
+          playerRef.current.currentTime(activeStartTime);
+          playerRef.current.play().catch(() => {});
+        } else if (isPlaylist) {
+          if (clipIndex + 1 < clipPlaylist.length) {
+            setClipIndex(prev => prev + 1);
+          } else if (repeatMode === 'all') {
+            setClipIndex(0);
+          } else {
+            playerRef.current.pause();
+          }
+        } else {
+          playerRef.current.pause();
+        }
+      }
+    };
+
+    player.on('timeupdate', handleTimeUpdate);
+
+    return () => {
+      if (player) {
+        player.off('timeupdate', handleTimeUpdate);
+      }
+    };
+  }, [clipIndex, activeSrc, activeStartTime, activeEndTime, repeatMode, isPlaylist, clipPlaylist.length, type]);
+
+  const lastPositionRef = useRef<number>(0);
+
+  const saveLastSeenPosition = () => {
+    let pos = lastPositionRef.current;
+    if (playerRef.current) {
+      try {
+        const curr = playerRef.current.currentTime();
+        if (typeof curr === 'number' && curr > 0) {
+          pos = Math.floor(curr);
+        }
+      } catch (e) {}
+    }
+    if (activeMediaId && pos > 0) {
+      mediaService.saveLastSeen(activeMediaId, pos);
+    }
+  };
+
+  const handleExitPlayer = () => {
+    saveLastSeenPosition();
+    if (onBack) onBack();
+  };
+
+  // Global D-pad Remote & Keyboard Shortcut listener
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (['Space', 'KeyK'].includes(e.code)) {
+        e.preventDefault();
+        togglePlayPause();
+      } else if (e.code === 'KeyN' || (e.code === 'ArrowRight' && e.shiftKey)) {
+        e.preventDefault();
+        handleNextClip();
+      } else if (e.code === 'KeyP' || (e.code === 'ArrowLeft' && e.shiftKey)) {
+        e.preventDefault();
+        handlePrevClip();
+      } else if (e.code === 'KeyR') {
+        e.preventDefault();
+        cycleRepeatMode();
+      } else if (e.code === 'KeyS' || e.code === 'KeyM') {
+        e.preventDefault();
+        setSoundOnly(prev => !prev);
+      } else if (['Escape', 'BrowserBack', 'Backspace'].includes(e.code)) {
+        e.preventDefault();
+        handleExitPlayer();
+      }
+    };
+
+    const handleBeforeUnload = () => {
+      saveLastSeenPosition();
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [clipIndex, isPlaylist, clipPlaylist.length, repeatMode, onBack, activeMediaId]);
+
+  // Cleanup Video.js & save last seen position on unmount
   useEffect(() => {
     return () => {
-      const player = playerRef.current;
-      if (player && !player.isDisposed()) {
-        player.dispose();
+      saveLastSeenPosition();
+      if (playerRef.current && !playerRef.current.isDisposed()) {
+        playerRef.current.dispose();
         playerRef.current = null;
       }
     };
-  }, []);
+  }, [activeMediaId]);
+
+  const togglePlayPause = () => {
+    if (!playerRef.current) return;
+    if (playerRef.current.paused()) {
+      playerRef.current.play();
+    } else {
+      playerRef.current.pause();
+    }
+  };
+
+  const handleNextClip = () => {
+    if (!isPlaylist) return;
+    if (clipIndex + 1 < clipPlaylist.length) {
+      setClipIndex(prev => prev + 1);
+    } else if (repeatMode === 'all') {
+      setClipIndex(0);
+    }
+  };
+
+  const handlePrevClip = () => {
+    if (!isPlaylist) return;
+    if (currentTimeSec - activeStartTime > 3) {
+      if (playerRef.current) playerRef.current.currentTime(activeStartTime);
+    } else if (clipIndex > 0) {
+      setClipIndex(prev => prev - 1);
+    } else if (repeatMode === 'all') {
+      setClipIndex(clipPlaylist.length - 1);
+    }
+  };
+
+  const cycleRepeatMode = () => {
+    setRepeatMode(prev => {
+      if (prev === 'off') return 'all';
+      if (prev === 'all') return 'one';
+      return 'off';
+    });
+  };
+
+  const formatSecs = (secs: number) => {
+    if (isNaN(secs) || secs < 0) return '00:00';
+    const m = Math.floor(secs / 60);
+    const s = Math.floor(secs % 60);
+    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+  };
+
+  // Sound-Only Seek Slider handler
+  const handleAudioSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const seekVal = parseFloat(e.target.value);
+    setCurrentTimeSec(seekVal);
+    if (playerRef.current) {
+      playerRef.current.currentTime(seekVal);
+    }
+  };
+
+  const clipStartBound = activeStartTime || 0;
+  const clipEndBound = activeEndTime || durationSec || 100;
+  const clipLength = Math.max(1, clipEndBound - clipStartBound);
+  const currentClipOffset = Math.max(0, currentTimeSec - clipStartBound);
+  const progressPercent = Math.min(100, Math.max(0, (currentClipOffset / clipLength) * 100));
 
   return (
-    <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', backgroundColor: '#000', zIndex: 9999 }}>
+    <div className="fullscreen-player-container">
+      {/* Back Button */}
       {onBack && (
-        <button 
-          onClick={onBack}
-          style={{
-            position: 'absolute',
-            top: '20px',
-            left: '20px',
-            zIndex: 10000,
-            padding: '10px 20px',
-            backgroundColor: 'rgba(0,0,0,0.6)',
-            border: '1px solid #333',
-            borderRadius: '4px',
-            cursor: 'pointer',
-            fontWeight: 'bold'
-          }}
-        >
-          ← Back
+        <button className="btn-player-back" onClick={handleExitPlayer}>
+          ← {isPlaylist ? `Exit ${categoryName || 'Clip'} Playlist` : 'Back'}
         </button>
       )}
-      <div ref={videoRef} style={{ width: '100%', height: '100%' }} />
 
-      {/* Scrubber Thumbnail Hover Preview */}
-      {previewState.show && scrubberReady && (
-        <div 
-          className="scrubber-preview-box"
-          style={{
-            position: 'absolute',
-            left: `${previewState.x}px`,
-            bottom: '60px', // Right above the progress control bar
-            transform: 'translateX(-50%)',
-            pointerEvents: 'none',
-            zIndex: 10005,
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            gap: '6px'
-          }}
-        >
-          <div className="preview-image-wrap">
-            <img 
-              src={previewState.imageUrl} 
-              alt="Seek preview" 
-              className="preview-image" 
-              onError={(e) => {
-                (e.target as HTMLElement).style.display = 'none';
-              }}
-            />
+      {/* Video.js element container (Hidden when Sound-Only mode is enabled for zero GPU overhead) */}
+      <div 
+        ref={videoRef} 
+        style={{ 
+          width: '100%', 
+          height: '100%',
+          display: soundOnly ? 'none' : 'block'
+        }} 
+      />
+
+      {/* Control overlay bar for Video Mode with Playlist buttons */}
+      {!soundOnly && (
+        <div className="player-playlist-controls-overlay">
+          {/* Sound Only Mode Toggle */}
+          <button 
+            className="btn-control-pill" 
+            onClick={() => setSoundOnly(true)}
+            title="Switch to Sound-Only Audio Player"
+          >
+            🎵 Sound Only Mode
+          </button>
+
+          {/* Repeat Mode Toggle */}
+          <button 
+            className={`btn-control-pill ${repeatMode !== 'off' ? 'active' : ''}`}
+            onClick={cycleRepeatMode}
+          >
+            {repeatMode === 'all' && '🔁 Repeat All'}
+            {repeatMode === 'one' && '🔂 Repeat One'}
+            {repeatMode === 'off' && '➡️ Repeat Off'}
+          </button>
+
+          {/* Playlist Next / Prev */}
+          {isPlaylist && (
+            <div className="playlist-nav-btns">
+              <button className="btn-control-pill" onClick={handlePrevClip} title="Previous Clip (P)">
+                ⏮️ Prev
+              </button>
+              <span className="playlist-pos-badge">
+                Clip {clipIndex + 1} / {clipPlaylist.length}
+              </span>
+              <button className="btn-control-pill" onClick={handleNextClip} title="Next Clip (N)">
+                Next ⏭️
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* FULL-SCREEN SOUND ONLY AUDIO PLAYER MODE UI */}
+      {soundOnly && (
+        <div className="sound-only-audio-player">
+          {/* Animated Background Glow */}
+          <div className="audio-bg-glow" />
+
+          <div className="audio-player-card">
+            {/* Pulsing Album Art Vinyl Container */}
+            <div className={`album-art-wrap ${isPlaying ? 'playing-spin' : ''}`}>
+              {activePoster ? (
+                <img src={activePoster} alt="Clip Poster" className="album-poster-img" />
+              ) : (
+                <div className="album-poster-fallback">🎵</div>
+              )}
+              <div className="vinyl-center-hole" />
+            </div>
+
+            {/* Audio Equalizer Wave Animation */}
+            <div className={`equalizer-wave ${isPlaying ? 'active' : ''}`}>
+              <span className="bar bar-1"></span>
+              <span className="bar bar-2"></span>
+              <span className="bar bar-3"></span>
+              <span className="bar bar-4"></span>
+              <span className="bar bar-5"></span>
+            </div>
+
+            {/* Song / Clip Metadata */}
+            <div className="audio-track-info">
+              <h2 className="audio-clip-title">
+                {currentClip ? currentClip.title : (allMediaList.find(m => m.id === mediaId)?.title || 'Audio Stream')}
+              </h2>
+              {parentMedia && <h4 className="audio-parent-title">🎥 {parentMedia.title}</h4>}
+              {categoryName && <span className="audio-cat-tag">🏷️ {categoryName}</span>}
+            </div>
+
+            {/* Audio Timeline & Progress Bar */}
+            <div className="audio-timeline-wrap">
+              <span className="time-text">{formatSecs(currentTimeSec)}</span>
+              <input 
+                type="range"
+                min={clipStartBound}
+                max={clipEndBound}
+                step={0.1}
+                value={currentTimeSec}
+                onChange={handleAudioSeek}
+                className="audio-seek-slider"
+                style={{
+                  background: `linear-gradient(to right, #3b82f6 ${progressPercent}%, rgba(255,255,255,0.15) ${progressPercent}%)`
+                }}
+              />
+              <span className="time-text">{formatSecs(clipEndBound)}</span>
+            </div>
+
+            {/* Audio Control Buttons */}
+            <div className="audio-controls-row">
+              {/* Repeat Mode */}
+              <button 
+                className={`audio-btn-icon ${repeatMode !== 'off' ? 'active' : ''}`}
+                onClick={cycleRepeatMode}
+                title="Toggle Repeat Mode"
+              >
+                {repeatMode === 'all' ? '🔁' : repeatMode === 'one' ? '🔂' : '➡️'}
+              </button>
+
+              {/* Previous Clip */}
+              <button 
+                className="audio-btn-icon" 
+                onClick={handlePrevClip}
+                disabled={!isPlaylist}
+                title="Previous Clip"
+              >
+                ⏮️
+              </button>
+
+              {/* Play / Pause Main Button */}
+              <button className="audio-btn-play-pause" onClick={togglePlayPause}>
+                {isPlaying ? '⏸️' : '▶️'}
+              </button>
+
+              {/* Next Clip */}
+              <button 
+                className="audio-btn-icon" 
+                onClick={handleNextClip}
+                disabled={!isPlaylist}
+                title="Next Clip"
+              >
+                ⏭️
+              </button>
+
+              {/* Switch back to Video Mode */}
+              <button 
+                className="audio-btn-icon video-switch-btn"
+                onClick={() => setSoundOnly(false)}
+                title="Switch back to Video Mode"
+              >
+                🎥
+              </button>
+            </div>
+
+            {/* Playlist Indicator */}
+            {isPlaylist && (
+              <div className="audio-playlist-indicator">
+                Playing Clip {clipIndex + 1} of {clipPlaylist.length} in Category
+              </div>
+            )}
           </div>
-          <span className="preview-time">{previewState.time}</span>
         </div>
       )}
     </div>
   );
 };
-

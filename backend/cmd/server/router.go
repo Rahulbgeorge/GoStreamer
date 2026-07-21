@@ -27,6 +27,8 @@ func setupRouter(
 	prefCtrl *controller.PreferenceController,
 	systemCtrl *controller.SystemController,
 	downloadCtrl *controller.DownloadController,
+	categoryCtrl *controller.CategoryController,
+	clipCtrl *controller.ClipController,
 ) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()
@@ -44,6 +46,22 @@ func setupRouter(
 	api.GET("/media/search", mediaCtrl.SearchMedia)
 	api.POST("/media/scan", mediaCtrl.ScanMedia)
 	api.POST("/media/:id/progress", mediaCtrl.UpdateProgress)
+	api.POST("/media/:id/save-last-seen", mediaCtrl.UpdateProgress)
+	api.POST("/media/:id/set-thumbnail", mediaCtrl.SetFrameThumbnail)
+	api.POST("/media/:id/set-start-time", mediaCtrl.SetDefaultStartTime)
+
+	// Category Routes
+	api.GET("/categories", categoryCtrl.GetAllCategories)
+	api.POST("/categories", categoryCtrl.CreateCategory)
+	api.DELETE("/categories/:id", categoryCtrl.DeleteCategory)
+
+	// Clip Routes
+	api.GET("/clips", clipCtrl.GetClips)
+	api.GET("/clips/:id", clipCtrl.GetClipByID)
+	api.POST("/clips", clipCtrl.CreateClip)
+	api.PUT("/clips/:id", clipCtrl.UpdateClip)
+	api.DELETE("/clips/:id", clipCtrl.DeleteClip)
+	api.GET("/clips/:id/thumbnail", clipCtrl.StreamClipThumbnail)
 
 	// Preferences Routes
 	api.GET("/preferences", prefCtrl.GetAllPreferences)

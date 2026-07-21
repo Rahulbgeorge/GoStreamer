@@ -13,8 +13,38 @@ export interface Media {
   status: 'pending' | 'downloading' | 'processing' | 'ready' | 'error';
   source: 'torrent' | 'upload' | 'scan';
   language: string;
+  last_position?: number;
+  default_start_time?: number;
   created_at: string;
   updated_at: string;
+}
+
+export interface Category {
+  id: string;
+  name: string;
+  created_at: string;
+}
+
+export interface Clip {
+  id: string;
+  media_id: string;
+  title: string;
+  start_time: number;
+  end_time: number;
+  thumbnail_path: string;
+  category_ids?: string[];
+  categories?: Category[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateClipPayload {
+  media_id: string;
+  title: string;
+  start_time: number;
+  end_time: number;
+  category_ids?: string[];
+  thumbnail_frame_time?: number;
 }
 
 export interface LibraryStats {

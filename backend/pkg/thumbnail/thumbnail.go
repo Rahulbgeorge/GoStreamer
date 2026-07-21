@@ -185,4 +185,36 @@ func ProbeDimensions(ctx context.Context, videoPath string) (int, int, error) {
 	return w, h, nil
 }
 
+// GenerateAtTime extracts a single frame thumbnail at a specific timestamp (in seconds) from a video file.
+func GenerateAtTime(ctx context.Context, videoPath string, outPath string, timestampSecs float64) (string, error) {
+	ffmpegPath, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		return "", fmt.Errorf("ffmpeg executable not found in PATH: %w", err)
+	}
+
+	cmdCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	timeStr := fmt.Sprintf("%.3f", timestampSecs)
+
+	cmd := exec.CommandContext(cmdCtx, ffmpegPath,
+		"-y",
+		"-ss", timeStr,
+		"-i", videoPath,
+		"-vframes", "1",
+		"-q:v", "2",
+		"-vf", "scale=480:-1",
+		outPath,
+	)
+
+	slog.Debug("Extracting thumbnail frame at timestamp", "timestamp", timeStr, "videoPath", videoPath, "outPath", outPath)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("ffmpeg frame extraction failed at %ss: %w (details: %s)", timeStr, err, string(out))
+	}
+
+	slog.Info("Successfully extracted frame thumbnail", "timestamp", timeStr, "outPath", outPath)
+	return outPath, nil
+}
+
+
 

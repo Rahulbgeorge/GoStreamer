@@ -2,25 +2,32 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"streamingplayer/internal/config"
 	"streamingplayer/internal/model"
 	"streamingplayer/internal/repository"
 	"streamingplayer/internal/service"
+	"streamingplayer/pkg/thumbnail"
 )
 
 type MediaController struct {
 	repo           repository.MediaRepository
 	scannerService service.ScannerService
+	cfg            *config.Config
 }
 
-func NewMediaController(repo repository.MediaRepository, scannerService service.ScannerService) *MediaController {
+func NewMediaController(repo repository.MediaRepository, scannerService service.ScannerService, cfg *config.Config) *MediaController {
 	return &MediaController{
 		repo:           repo,
 		scannerService: scannerService,
+		cfg:            cfg,
 	}
 }
 
@@ -236,3 +243,68 @@ func (ctrl *MediaController) ScanMedia(c *gin.Context) {
 	go ctrl.scannerService.ScanDirectory(context.Background())
 	c.JSON(http.StatusOK, gin.H{"data": true, "message": "Folder scanning initiated"})
 }
+
+type setFrameThumbnailRequest struct {
+	Timestamp float64 `json:"timestamp" binding:"required"`
+}
+
+// SetFrameThumbnail handles POST /api/v1/media/:id/set-thumbnail
+func (ctrl *MediaController) SetFrameThumbnail(c *gin.Context) {
+	id := c.Param("id")
+	media, err := ctrl.repo.FindByID(id)
+	if err != nil || media == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "media not found"})
+		return
+	}
+
+	var req setFrameThumbnailRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "timestamp parameter in seconds is required"})
+		return
+	}
+
+	outPath := filepath.Join(ctrl.cfg.ThumbnailDir, fmt.Sprintf("%s.jpg", media.ID))
+	genPath, genErr := thumbnail.GenerateAtTime(c.Request.Context(), media.FilePath, outPath, req.Timestamp)
+	if genErr != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to generate thumbnail frame: %v", genErr)})
+		return
+	}
+
+	media.ThumbnailPath = genPath
+	media.UpdatedAt = time.Now()
+	if err := ctrl.repo.Update(media); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to update media thumbnail path: %v", err)})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "thumbnail updated successfully", "thumbnail_path": genPath, "media": media})
+}
+
+type setDefaultStartTimeRequest struct {
+	DefaultStartTime int `json:"default_start_time"`
+}
+
+// SetDefaultStartTime handles POST /api/v1/media/:id/set-start-time
+func (ctrl *MediaController) SetDefaultStartTime(c *gin.Context) {
+	id := c.Param("id")
+	media, err := ctrl.repo.FindByID(id)
+	if err != nil || media == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "media not found"})
+		return
+	}
+
+	var req setDefaultStartTimeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := ctrl.repo.SetDefaultStartTime(id, req.DefaultStartTime); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	media.DefaultStartTime = req.DefaultStartTime
+	c.JSON(http.StatusOK, gin.H{"message": "default start time updated successfully", "default_start_time": req.DefaultStartTime, "media": media})
+}
+

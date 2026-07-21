@@ -1,6 +1,8 @@
 package controller
 
 import (
+	"fmt"
+	"log/slog"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -23,6 +25,15 @@ type ScanTorrentURLInput struct {
 	URL string `json:"url" binding:"required"`
 }
 
+func logApiPing(c *gin.Context, details string) {
+	msg := fmt.Sprintf("command [transmission] : API pinged - %s %s", c.Request.Method, c.Request.URL.Path)
+	if details != "" {
+		msg += fmt.Sprintf(" (%s)", details)
+	}
+	slog.Info(msg)
+	fmt.Println(msg)
+}
+
 // DownloadTorrent godoc
 // @Summary Start downloading a video from a magnet link
 // @Description Adds a magnet URI to the torrent client and begins background download
@@ -35,10 +46,12 @@ type ScanTorrentURLInput struct {
 func (ctrl *TorrentController) DownloadTorrent(c *gin.Context) {
 	var input DownloadTorrentInput
 	if err := c.ShouldBindJSON(&input); err != nil {
+		logApiPing(c, "invalid magnet_url input")
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input: magnet_url is required"})
 		return
 	}
 
+	logApiPing(c, fmt.Sprintf("magnet: %s", input.MagnetURL))
 	media, err := ctrl.torrentService.AddMagnet(c.Request.Context(), input.MagnetURL)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -56,6 +69,7 @@ func (ctrl *TorrentController) DownloadTorrent(c *gin.Context) {
 // @Success 200 {object} map[string]interface{} "List of active torrent statuses"
 // @Router /torrent/status [get]
 func (ctrl *TorrentController) ListActiveTorrents(c *gin.Context) {
+	logApiPing(c, "")
 	statuses := ctrl.torrentService.ListActive()
 	if statuses == nil {
 		statuses = []service.TorrentStatus{}
@@ -74,6 +88,7 @@ func (ctrl *TorrentController) ListActiveTorrents(c *gin.Context) {
 // @Router /torrent/status/{id} [get]
 func (ctrl *TorrentController) GetTorrentStatus(c *gin.Context) {
 	id := c.Param("id")
+	logApiPing(c, fmt.Sprintf("id: %s", id))
 	status, err := ctrl.torrentService.GetStatus(id)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
@@ -93,6 +108,7 @@ func (ctrl *TorrentController) GetTorrentStatus(c *gin.Context) {
 // @Router /torrent/cancel/{id} [post]
 func (ctrl *TorrentController) CancelTorrent(c *gin.Context) {
 	id := c.Param("id")
+	logApiPing(c, fmt.Sprintf("cancel id: %s", id))
 	if err := ctrl.torrentService.CancelTorrent(id); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -112,10 +128,12 @@ func (ctrl *TorrentController) CancelTorrent(c *gin.Context) {
 func (ctrl *TorrentController) ScanTorrentURL(c *gin.Context) {
 	var input ScanTorrentURLInput
 	if err := c.ShouldBindJSON(&input); err != nil {
+		logApiPing(c, "invalid url input")
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input: url is required"})
 		return
 	}
 
+	logApiPing(c, fmt.Sprintf("scan url: %s", input.URL))
 	targets, err := ctrl.torrentService.ScanHTML(c.Request.Context(), input.URL)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

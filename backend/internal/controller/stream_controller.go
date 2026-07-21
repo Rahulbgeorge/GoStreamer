@@ -107,7 +107,7 @@ func (ctrl *StreamController) StreamThumbnail(c *gin.Context) {
 	}
 
 	c.Header("Content-Type", "image/jpeg")
-	c.Header("Cache-Control", "public, max-age=31536000") // Cache thumbnails for a year
+	c.Header("Cache-Control", "no-cache, must-revalidate")
 	http.ServeContent(c.Writer, c.Request, fmt.Sprintf("%s.jpg", id), modTime, file)
 }
 

@@ -1,4 +1,4 @@
-import type { Media, LibraryStats, TorrentStatus, TorrentTarget, Preference, BrowseData, Download } from '../types/media';
+import type { Media, LibraryStats, TorrentStatus, TorrentTarget, Preference, BrowseData, Download, Category, Clip, CreateClipPayload } from '../types/media';
 
 export let API_BASE = (import.meta.env.VITE_API_BASE as string) || `/api/v1`;
 
@@ -137,6 +137,95 @@ export const mediaService = {
     return json.data || [];
   },
 
+  async setFrameThumbnail(id: string, timestamp: number): Promise<Media> {
+    const res = await fetch(`${API_BASE}/media/${id}/set-thumbnail`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ timestamp })
+    });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || 'Failed to set frame thumbnail');
+    return json.media;
+  },
+
+  async setDefaultStartTime(id: string, default_start_time: number): Promise<Media> {
+    const res = await fetch(`${API_BASE}/media/${id}/set-start-time`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ default_start_time })
+    });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || 'Failed to set default start time');
+    return json.media;
+  },
+
+  async getCategories(): Promise<Category[]> {
+    const res = await fetch(`${API_BASE}/categories`);
+    if (!res.ok) return [];
+    return await res.json();
+  },
+
+  async createCategory(name: string): Promise<Category> {
+    const res = await fetch(`${API_BASE}/categories`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name })
+    });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || 'Failed to create category');
+    return json;
+  },
+
+  async deleteCategory(id: string): Promise<boolean> {
+    const res = await fetch(`${API_BASE}/categories/${id}`, {
+      method: 'DELETE'
+    });
+    return res.ok;
+  },
+
+  async getClips(mediaId?: string, categoryId?: string): Promise<Clip[]> {
+    const params = new URLSearchParams();
+    if (mediaId) params.append('media_id', mediaId);
+    if (categoryId) params.append('category_id', categoryId);
+    const query = params.toString() ? `?${params.toString()}` : '';
+    const res = await fetch(`${API_BASE}/clips${query}`);
+    if (!res.ok) return [];
+    return await res.json();
+  },
+
+  async createClip(payload: CreateClipPayload): Promise<Clip> {
+    const res = await fetch(`${API_BASE}/clips`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || 'Failed to create clip');
+    return json;
+  },
+
+  async updateClip(id: string, payload: Partial<CreateClipPayload>): Promise<Clip> {
+    const res = await fetch(`${API_BASE}/clips/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || 'Failed to update clip');
+    return json;
+  },
+
+  async deleteClip(id: string): Promise<boolean> {
+    const res = await fetch(`${API_BASE}/clips/${id}`, {
+      method: 'DELETE'
+    });
+    return res.ok;
+  },
+
+  getClipThumbnailUrl(id: string): string {
+    return `${API_BASE}/clips/${id}/thumbnail`;
+  },
+
   async downloadTorrent(magnetUrl: string): Promise<Media> {
     const res = await fetch(`${API_BASE}/torrent/download`, {
       method: 'POST',
@@ -177,7 +266,10 @@ export const mediaService = {
     return `${API_BASE}/stream/${id}`;
   },
 
-  getThumbnailUrl(id: string): string {
+  getThumbnailUrl(id: string, version?: number | string): string {
+    if (version) {
+      return `${API_BASE}/media/${id}/thumbnail?v=${encodeURIComponent(version)}`;
+    }
     return `${API_BASE}/media/${id}/thumbnail`;
   },
 
@@ -276,5 +368,33 @@ export const mediaService = {
     });
     const json = await res.json();
     return !!json.data;
+  },
+
+  async updateProgress(id: string, position: number): Promise<boolean> {
+    const res = await fetch(`${API_BASE}/media/${id}/progress`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ last_position: Math.floor(position) })
+    });
+    const json = await res.json();
+    return res.ok && json.status === 'success';
+  },
+
+  saveLastSeen(id: string, position: number): void {
+    const pos = Math.floor(position);
+    if (!id || pos <= 0) return;
+    const url = `${API_BASE}/media/${id}/save-last-seen`;
+    const body = JSON.stringify({ last_position: pos, user_id: 'user_default' });
+    if (typeof navigator !== 'undefined' && navigator.sendBeacon) {
+      const blob = new Blob([body], { type: 'application/json' });
+      navigator.sendBeacon(url, blob);
+    } else {
+      fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body
+      }).catch(() => {});
+    }
   }
 };
+
