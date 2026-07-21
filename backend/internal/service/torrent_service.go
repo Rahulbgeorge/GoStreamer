@@ -105,11 +105,10 @@ func (s *torrentService) getMediaDir() string {
 
 func (s *torrentService) getTorrentDownloadDir() string {
 	baseDir := s.getMediaDir()
-	torrentDir := filepath.Join(baseDir, "torrent-download")
-	if err := os.MkdirAll(torrentDir, 0777); err != nil {
-		slog.Error("Failed to create torrent-download directory", "path", torrentDir, "err", err)
+	if err := os.MkdirAll(baseDir, 0777); err != nil {
+		slog.Error("Failed to create storage directory specified by admin", "path", baseDir, "err", err)
 	}
-	return torrentDir
+	return baseDir
 }
 
 func (s *torrentService) Close() {
@@ -409,18 +408,27 @@ func (s *torrentService) trackTorrentDownload(ctx context.Context, downloadID st
 
 						_ = s.downloadRepo.Update(dl)
 
-						if job.ProgressPct >= 100.0 {
-							slog.Info("Torrent download complete", "title", dl.Title, "path", dl.DestPath)
+						if job.ProgressPct >= 100.0 || strings.EqualFold(job.Status, "Seeding") || (job.ProgressPct >= 99.9 && (strings.EqualFold(job.Status, "Finished") || strings.EqualFold(job.Status, "Idle") || strings.EqualFold(job.Status, "Stopped"))) {
+							slog.Info("Torrent download reached 100% complete - stopping torrent", "title", dl.Title, "path", dl.DestPath, "transmissionID", at.transmissionID)
 
 							dl.Status = model.DownloadStatusCompleted
 							dl.Progress = 100.0
 							_ = s.downloadRepo.Update(dl)
 
-							// Clean up Transmission job (remove from Transmission daemon without deleting downloaded data)
-							_ = runTransmissionCmd("-t", at.transmissionID, "-r").Run()
+							// 1. Explicitly STOP the torrent via transmission-remote -t <id> -S
+							stopCmd := runTransmissionCmd("-t", at.transmissionID, "-S")
+							if errStop := stopCmd.Run(); errStop != nil {
+								slog.Warn("Failed to stop torrent in transmission", "id", at.transmissionID, "err", errStop)
+							}
+
+							// 2. Remove completed torrent job record from transmission daemon without deleting downloaded video files
+							removeCmd := runTransmissionCmd("-t", at.transmissionID, "-r")
+							if errRem := removeCmd.Run(); errRem != nil {
+								slog.Warn("Failed to remove completed torrent from transmission daemon", "id", at.transmissionID, "err", errRem)
+							}
 
 							s.removeActive(downloadID)
-							slog.Info("Torrent download complete, triggering directory scan", "title", dl.Title)
+							slog.Info("Torrent download complete and stopped, triggering directory scan", "title", dl.Title)
 
 							// Automatically scan folder to ingest the file and extract thumbnails
 							go s.scannerService.ScanDirectory(context.Background())
