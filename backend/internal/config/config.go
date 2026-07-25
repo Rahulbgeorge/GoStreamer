@@ -1,6 +1,7 @@
 package config
 
 import (
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -75,10 +76,29 @@ func (c *Config) SetupLogger() {
 		Level: level,
 	}
 
+	// Determine baseDir from DatabasePath: database is in baseDir/data/streaming.db
+	baseDir := filepath.Dir(filepath.Dir(c.DatabasePath))
+	logFilePath := filepath.Join(baseDir, "streamingplayer.log")
+
+	// Ensure baseDir exists
+	_ = os.MkdirAll(baseDir, 0755)
+
+	var logWriter io.Writer = os.Stdout
+	logFile, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	if err == nil {
+		logWriter = io.MultiWriter(os.Stdout, logFile)
+	}
+
 	// In development / local runs we can keep it as clean text.
-	handler := slog.NewTextHandler(os.Stdout, opts)
+	handler := slog.NewTextHandler(logWriter, opts)
 	logger := slog.New(handler)
 	slog.SetDefault(logger)
+
+	if err == nil {
+		slog.Info("Logger configured successfully. Logs are written to both stdout and file.", "file", logFilePath)
+	} else {
+		slog.Warn("Failed to open log file, falling back to stdout-only logging", "error", err)
+	}
 }
 
 func getEnv(key, fallback string) string {

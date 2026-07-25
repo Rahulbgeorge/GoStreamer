@@ -9,7 +9,7 @@ import java.net.URL;
 
 public class MainActivity extends BridgeActivity {
     private static final String TAG = "NetworkDebug";
-    private static final String TARGET_URL = "http://192.168.29.142:80";
+    private static final String TARGET_URL = "http://192.168.29.142:8000";
 
     @Override
     public void onCreate(Bundle savedInstanceState) {

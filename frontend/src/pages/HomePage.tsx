@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Media, LibraryStats, Category, Clip } from '../types/media';
 import { mediaService } from '../services/mediaService';
@@ -25,8 +25,9 @@ export const HomePage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [selectedMedia, setSelectedMedia] = useState<Media | null>(null);
   
-  const [focusedRow, setFocusedRow] = useState<'header' | 'recent' | 'grid'>('grid');
+  const [focusedRow, setFocusedRow] = useState<'sidenav' | 'header' | 'recent' | 'grid'>('grid');
   const [focusedIndex, setFocusedIndex] = useState(0);
+  const lastFocusedMainRowRef = useRef<'recent' | 'grid'>('grid');
   
   const [isEditing, setIsEditing] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -37,6 +38,46 @@ export const HomePage: React.FC = () => {
 
   // Home Page Category & Language Filter state
   const [activeFilter, setActiveFilter] = useState<string>('all');
+
+  // Extract unique languages dynamically from catalog
+  const availableLanguages = useMemo(() => {
+    const langs = new Set<string>();
+    movies.forEach(m => {
+      if (m.language && m.language.trim() !== '') {
+        langs.add(m.language.trim().toLowerCase());
+      }
+    });
+    return Array.from(langs);
+  }, [movies]);
+
+  // Filter movies based on active category / language filter
+  const displayedMovies = useMemo(() => {
+    if (activeFilter === 'all' || activeFilter === 'clips') return movies;
+    if (activeFilter.startsWith('lang:')) {
+      const targetLang = activeFilter.replace('lang:', '').toLowerCase();
+      return movies.filter(m => m.language.toLowerCase() === targetLang);
+    }
+    if (activeFilter.startsWith('cat:')) {
+      const catId = activeFilter.replace('cat:', '');
+      const catObj = categories.find(c => c.id === catId);
+      const catName = catObj ? catObj.name.toLowerCase() : '';
+      return movies.filter(m => 
+        (m.genre && m.genre.toLowerCase().includes(catName)) ||
+        clips.some(clip => clip.media_id === m.id && clip.category_ids?.includes(catId))
+      );
+    }
+    return movies;
+  }, [movies, activeFilter, categories, clips]);
+
+  // Filter clips based on active category filter
+  const displayedClips = useMemo(() => {
+    if (activeFilter === 'clips') return clips;
+    if (activeFilter.startsWith('cat:')) {
+      const catId = activeFilter.replace('cat:', '');
+      return clips.filter(c => c.category_ids?.includes(catId));
+    }
+    return clips;
+  }, [clips, activeFilter]);
 
   const fetchLibraryData = async () => {
     try {
@@ -112,60 +153,82 @@ export const HomePage: React.FC = () => {
         e.preventDefault();
       }
 
-      const isTv = document.body.classList.contains('tv-mode');
+      const sideNavItems = getSideNavItems();
 
       if (e.key === 'ArrowRight') {
-        if (focusedRow === 'header') {
-          setFocusedIndex(prev => isTv ? 0 : Math.min(prev + 1, 3));
-        } else if (focusedRow === 'recent' || focusedRow === 'grid') {
-          setFocusedIndex(prev => Math.min(prev + 1, movies.length - 1));
+        if (focusedRow === 'sidenav') {
+          // Leave sidenav, enter main content
+          setFocusedRow(lastFocusedMainRowRef.current);
+          setFocusedIndex(0);
+        } else if (focusedRow === 'recent') {
+          setFocusedIndex(prev => Math.min(prev + 1, displayedMovies.length - 1));
+        } else if (focusedRow === 'grid') {
+          setFocusedIndex(prev => Math.min(prev + 1, displayedMovies.length - 1));
         }
       } else if (e.key === 'ArrowLeft') {
-        setFocusedIndex(prev => Math.max(prev - 1, 0));
+        if (focusedRow === 'sidenav') {
+          // Do nothing
+        } else if (focusedRow === 'recent' || focusedRow === 'grid') {
+          if (focusedIndex === 0) {
+            // Go left to open sidenav
+            lastFocusedMainRowRef.current = focusedRow;
+            setFocusedRow('sidenav');
+            const activeFilterIdx = sideNavItems.indexOf(activeFilter);
+            setFocusedIndex(activeFilterIdx !== -1 ? activeFilterIdx : 1);
+          } else {
+            setFocusedIndex(prev => prev - 1);
+          }
+        }
       } else if (e.key === 'ArrowDown') {
-        if (focusedRow === 'header') {
-          setFocusedRow('recent');
-          setFocusedIndex(0);
+        if (focusedRow === 'sidenav') {
+          setFocusedIndex(prev => Math.min(sideNavItems.length - 1, prev + 1));
         } else if (focusedRow === 'recent') {
           setFocusedRow('grid');
           setFocusedIndex(0);
         }
       } else if (e.key === 'ArrowUp') {
-        if (focusedRow === 'grid') {
-          setFocusedRow('recent');
-          setFocusedIndex(0);
-        } else if (focusedRow === 'recent') {
-          setFocusedRow('header');
-          setFocusedIndex(isTv ? 0 : 1);
+        if (focusedRow === 'sidenav') {
+          setFocusedIndex(prev => Math.max(0, prev - 1));
+        } else if (focusedRow === 'grid') {
+          if (activeFilter === 'all' && displayedMovies.length > 0) {
+            setFocusedRow('recent');
+            setFocusedIndex(0);
+          }
         }
       } else if (e.key === 'Enter') {
-        if (focusedRow === 'header') {
-          if (focusedIndex === 0) {
+        if (focusedRow === 'sidenav') {
+          const selectedItem = sideNavItems[focusedIndex];
+          if (selectedItem === 'search') {
             e.preventDefault();
             (document.querySelector('.search-bar input') as HTMLInputElement)?.focus();
-          } else if (focusedIndex === 1) {
-            e.preventDefault();
+          } else if (selectedItem === 'all') {
+            setActiveFilter('all');
+          } else if (selectedItem === 'clips') {
+            setActiveFilter('clips');
+          } else if (selectedItem.startsWith('lang:')) {
+            setActiveFilter(selectedItem);
+          } else if (selectedItem.startsWith('cat:')) {
+            setActiveFilter(selectedItem);
+          } else if (selectedItem === 'categories-page') {
             setIsCategoryPage(true);
-          } else if (focusedIndex === 2) {
-            e.preventDefault();
+          } else if (selectedItem === 'upload') {
             setIsUploading(true);
-          } else if (focusedIndex === 3) {
-            e.preventDefault();
+          } else if (selectedItem === 'tasks') {
             setIsAdminPage(true);
           }
         } else if (focusedRow === 'recent') {
           e.preventDefault();
-          setSelectedMedia(movies[focusedIndex]);
+          setSelectedMedia(displayedMovies[focusedIndex]);
         } else if (focusedRow === 'grid') {
           e.preventDefault();
-          setSelectedMedia(movies[focusedIndex]);
+          setSelectedMedia(displayedMovies[focusedIndex]);
         }
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [focusedRow, focusedIndex, movies, selectedMedia, activeVideo, isUploading, isEditing, isAdminPage]);
+  }, [focusedRow, focusedIndex, movies, selectedMedia, activeVideo, isUploading, isEditing, isAdminPage, activeFilter, categories, clips, displayedMovies, availableLanguages]);
 
   const handleSearch = async (query: string) => {
     if (query.trim() === '') {
@@ -201,45 +264,7 @@ export const HomePage: React.FC = () => {
     }
   };
 
-  // Extract unique languages dynamically from catalog
-  const availableLanguages = useMemo(() => {
-    const langs = new Set<string>();
-    movies.forEach(m => {
-      if (m.language && m.language.trim() !== '') {
-        langs.add(m.language.trim().toLowerCase());
-      }
-    });
-    return Array.from(langs);
-  }, [movies]);
 
-  // Filter movies based on active category / language filter
-  const displayedMovies = useMemo(() => {
-    if (activeFilter === 'all' || activeFilter === 'clips') return movies;
-    if (activeFilter.startsWith('lang:')) {
-      const targetLang = activeFilter.replace('lang:', '').toLowerCase();
-      return movies.filter(m => m.language.toLowerCase() === targetLang);
-    }
-    if (activeFilter.startsWith('cat:')) {
-      const catId = activeFilter.replace('cat:', '');
-      const catObj = categories.find(c => c.id === catId);
-      const catName = catObj ? catObj.name.toLowerCase() : '';
-      return movies.filter(m => 
-        (m.genre && m.genre.toLowerCase().includes(catName)) ||
-        clips.some(clip => clip.media_id === m.id && clip.category_ids?.includes(catId))
-      );
-    }
-    return movies;
-  }, [movies, activeFilter, categories, clips]);
-
-  // Filter clips based on active category filter
-  const displayedClips = useMemo(() => {
-    if (activeFilter === 'clips') return clips;
-    if (activeFilter.startsWith('cat:')) {
-      const catId = activeFilter.replace('cat:', '');
-      return clips.filter(c => c.category_ids?.includes(catId));
-    }
-    return clips;
-  }, [clips, activeFilter]);
 
   if (isAdminPage) {
     return <AdminPage onBack={() => setIsAdminPage(false)} />;
@@ -249,111 +274,115 @@ export const HomePage: React.FC = () => {
     return <CategoryPage onBack={() => setIsCategoryPage(false)} onSelectMedia={(m) => { setSelectedMedia(m); setIsCategoryPage(false); }} />;
   }
 
+  const getSideNavItems = () => {
+    const items = ['search', 'all'];
+    if (clips.length > 0) {
+      items.push('clips');
+    }
+    availableLanguages.forEach(lang => {
+      items.push(`lang:${lang}`);
+    });
+    categories.forEach(cat => {
+      items.push(`cat:${cat.id}`);
+    });
+    items.push('categories-page', 'upload', 'tasks');
+    return items;
+  };
+
+  const getSideNavItemInfo = (item: string) => {
+    if (item === 'search') return { icon: '🔍', label: t('searchPlaceholder', { defaultValue: 'Search...' }) };
+    if (item === 'all') return { icon: '🏠', label: 'All Movies' };
+    if (item === 'clips') return { icon: '✂️', label: 'Featured Clips' };
+    if (item.startsWith('lang:')) {
+      const lang = item.replace('lang:', '').toUpperCase();
+      return { icon: '🌐', label: `${lang} Movies` };
+    }
+    if (item.startsWith('cat:')) {
+      const catId = item.replace('cat:', '');
+      const cat = categories.find(c => c.id === catId);
+      return { icon: '🏷️', label: cat ? cat.name : 'Category' };
+    }
+    if (item === 'categories-page') return { icon: '📂', label: 'Categories' };
+    if (item === 'upload') return { icon: '📤', label: 'Admin Upload' };
+    if (item === 'tasks') return { icon: '⚡', label: 'Tasks & Downloads' };
+    return { icon: '•', label: item };
+  };
+
   const heroMovie = movies.length > 0 ? movies[0] : null;
 
   return (
     <div className="homepage-wrapper">
-      {/* Header Bar */}
-      <header className="home-header">
-        <div className="header-brand">
+      {/* Left Navigation Bar (Side Drawer) */}
+      <aside className={`home-sidenav ${focusedRow === 'sidenav' ? 'expanded' : ''}`}>
+        <div className="sidenav-brand">
           <span className="brand-logo">📺</span>
-          <h1>{t('brand')}</h1>
-        </div>
-        <div className="header-actions">
-          <SearchBar 
-            onSearch={handleSearch} 
-            isFocused={focusedRow === 'header' && focusedIndex === 0} 
-          />
-          <button 
-            className={`btn-action categories-btn ${focusedRow === 'header' && focusedIndex === 1 ? 'focused' : ''}`} 
-            onClick={() => setIsCategoryPage(true)}
-          >
-            📂 Categories
-          </button>
-          <button 
-            className={`btn-action admin ${focusedRow === 'header' && focusedIndex === 2 ? 'focused' : ''}`} 
-            onClick={() => setIsUploading(true)}
-          >
-            📤 {t('admin')}
-          </button>
-          <button 
-            className={`btn-action tasks-dashboard ${focusedRow === 'header' && focusedIndex === 3 ? 'focused' : ''}`} 
-            onClick={() => setIsAdminPage(true)}
-          >
-            ⚡ Tasks & Downloads
-          </button>
-        </div>
-      </header>
-
-      {/* Library Stats Dashboard Banner */}
-      <div className="stats-row">
-        <span><strong>{t('statsCount')}:</strong> {stats.count}</span>
-        <span><strong>{t('statsSize')}:</strong> {(stats.total_size / (1024 * 1024 * 1024)).toFixed(2)} GB</span>
-      </div>
-
-      {/* Category & Language Navigation Filter Bar */}
-      <div className="home-category-bar">
-        <div className="filter-group">
-          <span className="filter-group-title">🎬 Catalogs:</span>
-          <button 
-            className={`home-cat-pill ${activeFilter === 'all' ? 'active' : ''}`}
-            onClick={() => setActiveFilter('all')}
-          >
-            All Movies ({movies.length})
-          </button>
-          {clips.length > 0 && (
-            <button 
-              className={`home-cat-pill ${activeFilter === 'clips' ? 'active' : ''}`}
-              onClick={() => setActiveFilter('clips')}
-            >
-              ✂️ Clips ({clips.length})
-            </button>
-          )}
+          <span className="brand-name">{t('brand')}</span>
         </div>
 
-        {/* Language Categories */}
-        {availableLanguages.length > 0 && (
-          <div className="filter-group">
-            <span className="filter-group-title">🌐 Languages:</span>
-            {availableLanguages.map(lang => {
-              const langKey = `lang:${lang}`;
-              const count = movies.filter(m => m.language.toLowerCase() === lang).length;
-              return (
-                <button 
-                  key={lang}
-                  className={`home-cat-pill ${activeFilter === langKey ? 'active' : ''}`}
-                  onClick={() => setActiveFilter(langKey)}
-                >
-                  {lang.toUpperCase()} ({count})
-                </button>
-              );
-            })}
+        <div className="sidenav-menu">
+          {getSideNavItems().map((item, idx) => {
+            const info = getSideNavItemInfo(item);
+            const isItemFocused = focusedRow === 'sidenav' && focusedIndex === idx;
+            const isItemActive = activeFilter === item || 
+              (item === 'search' && document.activeElement?.tagName === 'INPUT');
+
+            return (
+              <div 
+                key={item} 
+                className={`sidenav-item ${item}-item ${isItemFocused ? 'focused' : ''} ${isItemActive ? 'active' : ''}`}
+                onClick={() => {
+                  setFocusedRow('sidenav');
+                  setFocusedIndex(idx);
+                  if (item === 'search') {
+                    (document.querySelector('.search-bar input') as HTMLInputElement)?.focus();
+                  } else if (item === 'all') {
+                    setActiveFilter('all');
+                  } else if (item === 'clips') {
+                    setActiveFilter('clips');
+                  } else if (item.startsWith('lang:')) {
+                    setActiveFilter(item);
+                  } else if (item.startsWith('cat:')) {
+                    setActiveFilter(item);
+                  } else if (item === 'categories-page') {
+                    setIsCategoryPage(true);
+                  } else if (item === 'upload') {
+                    setIsUploading(true);
+                  } else if (item === 'tasks') {
+                    setIsAdminPage(true);
+                  }
+                }}
+              >
+                {item === 'search' ? (
+                  <SearchBar 
+                    onSearch={handleSearch} 
+                    isFocused={isItemFocused} 
+                  />
+                ) : (
+                  <>
+                    <span className="sidenav-item-icon">{info.icon}</span>
+                    <span className="sidenav-item-label">{info.label}</span>
+                  </>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="sidenav-footer">
+          <div className="stats-indicator">
+            <span className="footer-icon">📊</span>
+            <span className="footer-label">
+              {stats.count} Videos ({(stats.total_size / (1024 * 1024 * 1024)).toFixed(2)} GB)
+            </span>
           </div>
-        )}
+        </div>
+      </aside>
 
-        {/* Database Categories (Songs, Highlights, Action, etc.) */}
-        {categories.length > 0 && (
-          <div className="filter-group">
-            <span className="filter-group-title">🏷️ Categories:</span>
-            {categories.map(cat => {
-              const catKey = `cat:${cat.id}`;
-              return (
-                <button 
-                  key={cat.id}
-                  className={`home-cat-pill ${activeFilter === catKey ? 'active' : ''}`}
-                  onClick={() => setActiveFilter(catKey)}
-                >
-                  {cat.name}
-                </button>
-              );
-            })}
-          </div>
-        )}
-      </div>
-
-      {loading ? (
-        <div className="loading-spinner">Loading catalogs...</div>
-      ) : (
+      {/* Main Content Area */}
+      <main className="home-main-content">
+        {loading ? (
+          <div className="loading-spinner">Loading catalogs...</div>
+        ) : (
         <>
           {/* Main Hero Movie spotlight Banner */}
           {heroMovie && activeFilter === 'all' && (
@@ -445,6 +474,7 @@ export const HomePage: React.FC = () => {
           )}
         </>
       )}
+      </main>
 
       {/* Full Movie player screen overlay */}
       {activeVideo && (
