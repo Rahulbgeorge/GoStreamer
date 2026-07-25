@@ -41,7 +41,7 @@ func (ctrl *UploadController) CheckUpload(c *gin.Context) {
 			"exists":          exists,
 			"upload_id":       uploadID,
 			"uploaded_chunks": uploadedChunks,
-			"chunk_size":      2621440, // 2.5MB
+			"chunk_size":      5242880, // 5MB
 		},
 	})
 }

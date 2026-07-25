@@ -12,6 +12,12 @@ interface UploadModalProps {
 export const UploadModal: React.FC<UploadModalProps> = ({ onClose, onUploadSuccess }) => {
   const { t } = useTranslation();
   const [file, setFile] = useState<File | null>(null);
+  const [resumeData, setResumeData] = useState<{
+    exists: boolean;
+    uploadId: string;
+    uploadedChunks: number[];
+    progress: number;
+  } | null>(null);
   const [progress, setProgress] = useState<number>(0);
   const [status, setStatus] = useState<'idle' | 'uploading' | 'complete' | 'error'>('idle');
 
@@ -325,19 +331,43 @@ export const UploadModal: React.FC<UploadModalProps> = ({ onClose, onUploadSucce
     }
   };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
-      setFile(e.target.files[0]);
+      const selectedFile = e.target.files[0];
+      setFile(selectedFile);
+      setResumeData(null);
+
+      // Check if resumable
+      const fingerprint = `${selectedFile.name}_${selectedFile.size}_${selectedFile.lastModified}`;
+      try {
+        const checkRes = await fetch(`${API_BASE}/upload/check?fingerprint=${encodeURIComponent(fingerprint)}`);
+        const checkJson = await checkRes.json();
+        if (checkJson.data && checkJson.data.exists) {
+          const CHUNK_SIZE = Math.round(1024 * 1024 * 5); // 5MB Chunks
+          const totalChunks = Math.ceil(selectedFile.size / CHUNK_SIZE);
+          const uploadedCount = (checkJson.data.uploaded_chunks || []).length;
+          const calculatedProgress = Math.round((uploadedCount / totalChunks) * 100);
+
+          setResumeData({
+            exists: true,
+            uploadId: checkJson.data.upload_id,
+            uploadedChunks: checkJson.data.uploaded_chunks || [],
+            progress: calculatedProgress
+          });
+        }
+      } catch (err) {
+        console.error("Failed to check resumable upload:", err);
+      }
     }
   };
 
-  const startUpload = async () => {
+  const startUpload = async (forceFresh = false) => {
     if (!file) return;
 
     setStatus('uploading');
     setProgress(0);
 
-    const CHUNK_SIZE = Math.round(1024 * 1024 * 2.5); // 2.5MB Chunks
+    const CHUNK_SIZE = Math.round(1024 * 1024 * 5); // 5MB Chunks
     const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
     
     // Generate unique fingerprint
@@ -357,16 +387,12 @@ export const UploadModal: React.FC<UploadModalProps> = ({ onClose, onUploadSucce
     }
 
     try {
-      // Step 0: Check if upload is resumable
-      const checkRes = await fetch(`${API_BASE}/upload/check?fingerprint=${encodeURIComponent(fingerprint)}`);
-      const checkJson = await checkRes.json();
-      
       let uploadID = '';
       let uploadedChunks: number[] = [];
-      
-      if (checkJson.data && checkJson.data.exists) {
-        uploadID = checkJson.data.upload_id;
-        uploadedChunks = checkJson.data.uploaded_chunks || [];
+
+      if (resumeData && resumeData.exists && !forceFresh) {
+        uploadID = resumeData.uploadId;
+        uploadedChunks = resumeData.uploadedChunks;
         console.log(`Resuming upload: ${uploadID}. Skipping chunks:`, uploadedChunks);
       } else {
         // Step 1: Initialize fresh Upload session
@@ -376,7 +402,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({ onClose, onUploadSucce
           body: JSON.stringify({ 
             filename: file.name, 
             total_size: file.size,
-            fingerprint: fingerprint,
+            fingerprint: forceFresh ? `${fingerprint}_fresh_${Date.now()}` : fingerprint,
             device: deviceName
           })
         });
@@ -490,16 +516,34 @@ export const UploadModal: React.FC<UploadModalProps> = ({ onClose, onUploadSucce
                 <p>{t('uploadHelp')}</p>
                 <input type="file" accept="video/*" onChange={handleFileChange} />
                 {file && (
-                  <button className="btn-upload" onClick={startUpload}>
-                    Upload {(file.size / (1024 * 1024)).toFixed(1)} MB
-                  </button>
+                  <div className="upload-buttons-container" style={{ marginTop: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                    {resumeData && resumeData.exists ? (
+                      <div className="resume-prompt-card" style={{ backgroundColor: 'rgba(255, 165, 0, 0.12)', border: '1px solid rgba(255, 165, 0, 0.3)', padding: '1rem', borderRadius: '8px', textAlign: 'left' }}>
+                        <p style={{ margin: '0 0 0.75rem 0', color: 'orange', fontWeight: 'bold' }}>
+                          ⚠️ Previous incomplete upload detected ({resumeData.progress}% complete).
+                        </p>
+                        <div style={{ display: 'flex', gap: '1rem' }}>
+                          <button className="btn-upload resume-btn" onClick={() => startUpload(false)} style={{ backgroundColor: 'orange', borderColor: 'orange', color: '#111', fontWeight: 'bold', flex: 1, padding: '0.75rem' }}>
+                            🔄 Resume Upload ({resumeData.progress}%)
+                          </button>
+                          <button className="btn-upload fresh-btn" onClick={() => startUpload(true)} style={{ backgroundColor: 'transparent', border: '1px solid #ff4d4d', color: '#ff4d4d', fontWeight: 'bold', flex: 1, padding: '0.75rem' }}>
+                            🆕 Start Fresh
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <button className="btn-upload" onClick={() => startUpload(false)}>
+                        Upload {(file.size / (1024 * 1024)).toFixed(1)} MB
+                      </button>
+                    )}
+                  </div>
                 )}
               </div>
             )}
 
-            {status === 'uploading' && (
+            {status === 'uploading' && file && (
               <div className="progress-container">
-                <p>Uploading... {progress}%</p>
+                <p>Uploading... {progress}% ({((Math.min(file.size, (progress / 100) * file.size)) / (1024 * 1024)).toFixed(1)} MB / {(file.size / (1024 * 1024)).toFixed(1)} MB)</p>
                 <div className="progress-bar">
                   <div className="progress-fill" style={{ width: `${progress}%` }}></div>
                 </div>

@@ -176,11 +176,21 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       }
     };
 
+    const handleDurationChange = () => {
+      if (playerRef.current) {
+        setDurationSec(playerRef.current.duration() || 0);
+      }
+    };
+
     player.on('timeupdate', handleTimeUpdate);
+    player.on('durationchange', handleDurationChange);
+    player.on('loadedmetadata', handleDurationChange);
 
     return () => {
       if (player) {
         player.off('timeupdate', handleTimeUpdate);
+        player.off('durationchange', handleDurationChange);
+        player.off('loadedmetadata', handleDurationChange);
       }
     };
   }, [clipIndex, activeSrc, activeStartTime, activeEndTime, repeatMode, isPlaylist, clipPlaylist.length, type]);
@@ -425,8 +435,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }
 
     const startTime = isSeeking ? seekTargetTimeRef.current : (playerRef.current.currentTime() || 0);
-    const dur = playerRef.current.duration() || 0;
-    const target = Math.max(0, Math.min(dur, startTime + delta));
+    const startBound = activeStartTime || 0;
+    const endBound = activeEndTime || (playerRef.current ? playerRef.current.duration() : 0) || 100;
+    const target = Math.max(startBound, Math.min(endBound, startTime + delta));
     seekTargetTimeRef.current = target;
     setSeekTargetTime(target);
 
@@ -582,7 +593,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const clipStartBound = activeStartTime || 0;
   const clipEndBound = activeEndTime || durationSec || 100;
   const clipLength = Math.max(1, clipEndBound - clipStartBound);
-  const currentClipOffset = Math.max(0, currentTimeSec - clipStartBound);
+  const displayTime = isSeeking ? seekTargetTime : currentTimeSec;
+  const currentClipOffset = Math.max(0, displayTime - clipStartBound);
   const progressPercent = Math.min(100, Math.max(0, (currentClipOffset / clipLength) * 100));
 
   return (
@@ -758,7 +770,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             <div className="tv-progress-bar-bg">
               <div 
                 className="tv-progress-bar-fill" 
-                style={{ width: `${(seekTargetTime / clipEndBound) * 100}%` }} 
+                style={{ width: `${progressPercent}%` }} 
               />
             </div>
             <span className="tv-time-text">{formatSecs(clipEndBound)}</span>
