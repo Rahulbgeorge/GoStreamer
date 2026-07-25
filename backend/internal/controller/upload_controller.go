@@ -17,8 +17,33 @@ func NewUploadController(uploadService service.UploadService) *UploadController 
 }
 
 type InitUploadInput struct {
-	Filename  string `json:"filename" binding:"required"`
-	TotalSize int64  `json:"total_size" binding:"required"`
+	Filename    string `json:"filename" binding:"required"`
+	TotalSize   int64  `json:"total_size" binding:"required"`
+	Fingerprint string `json:"fingerprint"`
+	Device      string `json:"device"`
+}
+
+func (ctrl *UploadController) CheckUpload(c *gin.Context) {
+	fingerprint := c.Query("fingerprint")
+	if fingerprint == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Missing fingerprint parameter"})
+		return
+	}
+
+	uploadID, uploadedChunks, exists, err := ctrl.uploadService.CheckUpload(fingerprint)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"data": gin.H{
+			"exists":          exists,
+			"upload_id":       uploadID,
+			"uploaded_chunks": uploadedChunks,
+			"chunk_size":      2621440, // 2.5MB
+		},
+	})
 }
 
 func (ctrl *UploadController) InitUpload(c *gin.Context) {
@@ -28,7 +53,12 @@ func (ctrl *UploadController) InitUpload(c *gin.Context) {
 		return
 	}
 
-	uploadID, err := ctrl.uploadService.InitUpload(input.Filename, input.TotalSize)
+	device := input.Device
+	if device == "" {
+		device = c.Request.UserAgent()
+	}
+
+	uploadID, err := ctrl.uploadService.InitUpload(input.Filename, input.TotalSize, input.Fingerprint, device)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

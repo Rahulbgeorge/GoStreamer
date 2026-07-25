@@ -337,21 +337,62 @@ export const UploadModal: React.FC<UploadModalProps> = ({ onClose, onUploadSucce
     setStatus('uploading');
     setProgress(0);
 
-    const CHUNK_SIZE = Math.round(1024 * 1024 * 2.5); // 2.5MB Chunks (faster/more reliable internet upload)
+    const CHUNK_SIZE = Math.round(1024 * 1024 * 2.5); // 2.5MB Chunks
     const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
     
+    // Generate unique fingerprint
+    const fingerprint = `${file.name}_${file.size}_${file.lastModified}`;
+    
+    // Parse device details
+    const userAgent = navigator.userAgent;
+    let deviceName = 'Browser Client';
+    if (userAgent.indexOf('Mac') !== -1) {
+      deviceName = 'MacBook Client';
+    } else if (userAgent.indexOf('Win') !== -1) {
+      deviceName = 'Windows Client';
+    } else if (userAgent.indexOf('Android') !== -1) {
+      deviceName = 'Android TV/Phone';
+    } else if (userAgent.indexOf('Linux') !== -1) {
+      deviceName = 'Linux Client';
+    }
+
     try {
-      // Step 1: Initialize Upload
-      const initRes = await fetch(`${API_BASE}/upload/init`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ filename: file.name, total_size: file.size })
-      });
-      const initJson = await initRes.json();
-      const uploadID = initJson.data.upload_id;
+      // Step 0: Check if upload is resumable
+      const checkRes = await fetch(`${API_BASE}/upload/check?fingerprint=${encodeURIComponent(fingerprint)}`);
+      const checkJson = await checkRes.json();
+      
+      let uploadID = '';
+      let uploadedChunks: number[] = [];
+      
+      if (checkJson.data && checkJson.data.exists) {
+        uploadID = checkJson.data.upload_id;
+        uploadedChunks = checkJson.data.uploaded_chunks || [];
+        console.log(`Resuming upload: ${uploadID}. Skipping chunks:`, uploadedChunks);
+      } else {
+        // Step 1: Initialize fresh Upload session
+        const initRes = await fetch(`${API_BASE}/upload/init`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+            filename: file.name, 
+            total_size: file.size,
+            fingerprint: fingerprint,
+            device: deviceName
+          })
+        });
+        if (!initRes.ok) throw new Error("Initialization failed");
+        const initJson = await initRes.json();
+        uploadID = initJson.data.upload_id;
+      }
 
       // Step 2: Upload Chunks Sequentially
       for (let chunkIdx = 0; chunkIdx < totalChunks; chunkIdx++) {
+        if (uploadedChunks.includes(chunkIdx)) {
+          // Skip already uploaded chunks
+          setProgress(Math.round(((chunkIdx + 1) / totalChunks) * 100));
+          continue;
+        }
+
         const start = chunkIdx * CHUNK_SIZE;
         const end = Math.min(file.size, start + CHUNK_SIZE);
         const chunkBlob = file.slice(start, end);

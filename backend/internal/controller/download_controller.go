@@ -2,8 +2,11 @@ package controller
 
 import (
 	"net/http"
+	"os"
+	"path/filepath"
 
 	"github.com/gin-gonic/gin"
+	"streamingplayer/internal/config"
 	"streamingplayer/internal/model"
 	"streamingplayer/internal/repository"
 	"streamingplayer/internal/service"
@@ -12,12 +15,18 @@ import (
 type DownloadController struct {
 	downloadRepo   repository.DownloadRepository
 	torrentService service.TorrentService
+	config         *config.Config
 }
 
-func NewDownloadController(downloadRepo repository.DownloadRepository, torrentService service.TorrentService) *DownloadController {
+func NewDownloadController(
+	downloadRepo repository.DownloadRepository,
+	torrentService service.TorrentService,
+	cfg *config.Config,
+) *DownloadController {
 	return &DownloadController{
 		downloadRepo:   downloadRepo,
 		torrentService: torrentService,
+		config:         cfg,
 	}
 }
 
@@ -61,6 +70,11 @@ func (ctrl *DownloadController) DeleteDownload(c *gin.Context) {
 
 	if dl.Type == model.DownloadTypeTorrent {
 		_ = ctrl.torrentService.CancelTorrent(id)
+	}
+
+	if dl.Type == "upload" {
+		chunkDir := filepath.Join(ctrl.config.UploadDir, id)
+		_ = os.RemoveAll(chunkDir)
 	}
 
 	if err := ctrl.downloadRepo.Delete(id); err != nil {

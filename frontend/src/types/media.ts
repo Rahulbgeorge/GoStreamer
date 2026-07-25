@@ -50,6 +50,7 @@ export interface CreateClipPayload {
 export interface LibraryStats {
   count: number;
   total_size: number;
+  uploads_size?: number;
 }
 
 export interface TorrentStatus {
@@ -88,8 +89,8 @@ export interface BrowseData {
 export interface Download {
   id: string;
   title: string;
-  status: 'downloading' | 'completed' | 'failed' | 'cancelled';
-  type: 'torrent' | 'youtube';
+  status: 'downloading' | 'completed' | 'failed' | 'cancelled' | 'uploading';
+  type: 'torrent' | 'youtube' | 'upload';
   progress: number;
   total_size: number;
   completed_size: number;

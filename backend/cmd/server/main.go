@@ -51,7 +51,7 @@ func main() {
 
 	streamService := service.NewStreamService(mediaRepo)
 	scannerService := service.NewScannerService(cfg, mediaRepo, prefRepo)
-	uploadService := service.NewUploadService(cfg, mediaRepo, prefRepo)
+	uploadService := service.NewUploadService(cfg, mediaRepo, prefRepo, downloadRepo)
 	torrentService, err := service.NewTorrentService(cfg, mediaRepo, prefRepo, downloadRepo, scannerService)
 	if err != nil {
 		slog.Error("Failed to initialize torrent service", "err", err)
@@ -68,7 +68,7 @@ func main() {
 	torrentCtrl := controller.NewTorrentController(torrentService)
 	prefCtrl := controller.NewPreferenceController(prefRepo)
 	systemCtrl := controller.NewSystemController()
-	downloadCtrl := controller.NewDownloadController(downloadRepo, torrentService)
+	downloadCtrl := controller.NewDownloadController(downloadRepo, torrentService, cfg)
 	categoryCtrl := controller.NewCategoryController(categoryRepo)
 	clipCtrl := controller.NewClipController(cfg, clipRepo, mediaRepo)
 

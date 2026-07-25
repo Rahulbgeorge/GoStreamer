@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Media, Download, Category, Clip } from '../types/media';
+import { Media, Download, Category, Clip, LibraryStats } from '../types/media';
 import { mediaService } from '../services/mediaService';
 import { VideoPlayer } from '../components/VideoPlayer';
 import { MediaPicker } from '../components/MediaPicker';
@@ -22,6 +22,7 @@ export const AdminPage: React.FC<AdminPageProps> = ({ onBack }) => {
   const [activeTasks, setActiveTasks] = useState<Media[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [clips, setClips] = useState<Clip[]>([]);
+  const [stats, setStats] = useState<LibraryStats>({ count: 0, total_size: 0, uploads_size: 0 });
 
   // Home Page Row Order State
   const [rowOrders, setRowOrders] = useState<Array<{ id: string; name: string; type: string; visible: boolean }>>([
@@ -85,6 +86,9 @@ export const AdminPage: React.FC<AdminPageProps> = ({ onBack }) => {
 
       const clipsData = await mediaService.getClips();
       setClips(clipsData);
+
+      const libraryStats = await mediaService.getStats();
+      setStats(libraryStats);
     } catch (err) {
       console.error('Failed to fetch admin dashboard metrics:', err);
     } finally {
@@ -656,6 +660,25 @@ export const AdminPage: React.FC<AdminPageProps> = ({ onBack }) => {
       {/* TAB 4: TASKS & DOWNLOADS (EXISTING DASHBOARD) */}
       {activeTab === 'tasks' && (
         <div className="tab-content tasks-tab">
+          {/* Storage space info card */}
+          <div className="storage-summary-banner" style={{ display: 'flex', gap: '1rem', marginBottom: '1.5rem' }}>
+            <div className="storage-summary-card" style={{ flex: 1, backgroundColor: 'rgba(255,255,255,0.05)', padding: '1rem', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '1rem' }}>
+              <span className="icon" style={{ fontSize: '1.5rem' }}>💿</span>
+              <div className="summary-info">
+                <h4 style={{ margin: 0, fontSize: '0.9rem', color: '#888' }}>Total Library Space</h4>
+                <p style={{ margin: '4px 0 0', fontSize: '1.2rem', fontWeight: 'bold' }}>{formatSize(stats.total_size)} ({stats.count} videos)</p>
+              </div>
+            </div>
+            {stats.uploads_size !== undefined && stats.uploads_size > 0 && (
+              <div className="storage-summary-card warning" style={{ flex: 1, backgroundColor: 'rgba(255,165,0,0.1)', border: '1px solid rgba(255,165,0,0.3)', padding: '1rem', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                <span className="icon" style={{ fontSize: '1.5rem' }}>🧹</span>
+                <div className="summary-info">
+                  <h4 style={{ margin: 0, fontSize: '0.9rem', color: 'orange' }}>Incomplete Upload Chunks Cache</h4>
+                  <p style={{ margin: '4px 0 0', fontSize: '1.2rem', fontWeight: 'bold', color: '#ffb366' }}>{formatSize(stats.uploads_size)}</p>
+                </div>
+              </div>
+            )}
+          </div>
           <div className="admin-dashboard-grid">
             <section className="dashboard-section task-queue-section">
               <h3>⚡ Background Metadata & Thumbnail Tasks ({activeTasks.length})</h3>
@@ -697,7 +720,9 @@ export const AdminPage: React.FC<AdminPageProps> = ({ onBack }) => {
                       <div className="dl-header">
                         <div className="dl-title-group">
                           <span className={`type-badge type-${dl.type}`}>
-                            {dl.type === 'torrent' ? '🧲 Torrent' : '🎥 YouTube'}
+                            {dl.type === 'torrent' && '🧲 Torrent'}
+                            {dl.type === 'youtube' && '🎥 YouTube'}
+                            {dl.type === 'upload' && '📤 Upload'}
                           </span>
                           <h4 className="dl-title">{dl.title}</h4>
                         </div>
@@ -707,7 +732,13 @@ export const AdminPage: React.FC<AdminPageProps> = ({ onBack }) => {
                       </div>
 
                       <div className="dl-body">
-                        <p className="dl-path"><strong>Destination:</strong> {dl.dest_path}</p>
+                        {dl.type === 'upload' ? (
+                          <p className="dl-path">
+                            <strong>Device:</strong> {dl.dest_path.includes('|') ? dl.dest_path.split('|')[0].replace('device:', '') : dl.dest_path}
+                          </p>
+                        ) : (
+                          <p className="dl-path"><strong>Destination:</strong> {dl.dest_path}</p>
+                        )}
                         <div className="dl-metrics-row">
                           <span>{dl.progress.toFixed(1)}%</span>
                           {dl.status === 'downloading' && (

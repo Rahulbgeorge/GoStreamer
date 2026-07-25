@@ -79,6 +79,7 @@ func setupRouter(
 	api.GET("/media/:id/scrubber/image/:frame", streamCtrl.StreamScrubberImage)
 
 	// Upload Routes
+	api.GET("/upload/check", uploadCtrl.CheckUpload)
 	api.POST("/upload/init", uploadCtrl.InitUpload)
 	api.POST("/upload/:id/chunk", uploadCtrl.UploadChunk)
 	api.POST("/upload/:id/complete", uploadCtrl.CompleteUpload)

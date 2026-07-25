@@ -182,6 +182,17 @@ func (ctrl *MediaController) UpdateProgress(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "success", "id": id, "last_position": pos})
 }
 
+func getDirSize(path string) int64 {
+	var size int64 = 0
+	_ = filepath.Walk(path, func(_ string, info os.FileInfo, err error) error {
+		if err == nil && !info.IsDir() {
+			size += info.Size()
+		}
+		return nil
+	})
+	return size
+}
+
 func (ctrl *MediaController) GetLibraryStats(c *gin.Context) {
 	count, err := ctrl.repo.Count()
 	if err != nil {
@@ -195,9 +206,12 @@ func (ctrl *MediaController) GetLibraryStats(c *gin.Context) {
 		return
 	}
 
+	uploadsSize := getDirSize(ctrl.cfg.UploadDir)
+
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{
-		"count":      count,
-		"total_size": totalSize,
+		"count":        count,
+		"total_size":   totalSize,
+		"uploads_size": uploadsSize,
 	}})
 }
 
