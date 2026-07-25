@@ -21,6 +21,11 @@ export const UploadModal: React.FC<UploadModalProps> = ({ onClose, onUploadSucce
   const [progress, setProgress] = useState<number>(0);
   const [status, setStatus] = useState<'idle' | 'uploading' | 'complete' | 'error'>('idle');
   const [cooloffRemaining, setCooloffRemaining] = useState<number>(0);
+  const [uploadSpeed, setUploadSpeed] = useState<number | null>(null);
+
+  // Speed calculation refs
+  const bytesUploadedInWindowRef = useRef<number>(0);
+  const lastSpeedCheckTimeRef = useRef<number>(0);
 
   // Auto-resume refs
   const retryCountInWindowRef = useRef<number>(0);
@@ -380,6 +385,9 @@ export const UploadModal: React.FC<UploadModalProps> = ({ onClose, onUploadSucce
 
     setStatus('uploading');
     setProgress(0);
+    setUploadSpeed(null);
+    bytesUploadedInWindowRef.current = 0;
+    lastSpeedCheckTimeRef.current = Date.now();
 
     const CHUNK_SIZE = Math.round(1024 * 1024 * 5); // 5MB Chunks
     const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
@@ -474,6 +482,21 @@ export const UploadModal: React.FC<UploadModalProps> = ({ onClose, onUploadSucce
           });
 
           if (!chunkRes.ok) throw new Error(`Chunk ${chunkIdx} upload failed`);
+
+          // Update speed calculations
+          const chunkSizeUploaded = chunkBlob.size;
+          bytesUploadedInWindowRef.current += chunkSizeUploaded;
+          
+          const nowTime = Date.now();
+          const elapsed = nowTime - lastSpeedCheckTimeRef.current;
+          if (elapsed >= 10000) { // 10 seconds window
+            const mbUploaded = bytesUploadedInWindowRef.current / (1024 * 1024);
+            const calculatedSpeed = mbUploaded / 10;
+            setUploadSpeed(calculatedSpeed);
+            
+            bytesUploadedInWindowRef.current = 0;
+            lastSpeedCheckTimeRef.current = nowTime;
+          }
 
           setProgress(Math.round(((chunkIdx + 1) / totalChunks) * 100));
         }
@@ -619,8 +642,13 @@ export const UploadModal: React.FC<UploadModalProps> = ({ onClose, onUploadSucce
 
             {status === 'uploading' && file && (
               <div className="progress-container">
-                <p>Uploading... {progress}% ({((Math.min(file.size, (progress / 100) * file.size)) / (1024 * 1024)).toFixed(1)} MB / {(file.size / (1024 * 1024)).toFixed(1)} MB)</p>
-                <div className="progress-bar">
+                <p style={{ margin: 0 }}>Uploading... {progress}% ({((Math.min(file.size, (progress / 100) * file.size)) / (1024 * 1024)).toFixed(1)} MB / {(file.size / (1024 * 1024)).toFixed(1)} MB)</p>
+                {uploadSpeed !== null && (
+                  <p style={{ fontSize: '0.85rem', color: '#a0aec0', marginTop: '0.25rem', marginBottom: '0.5rem', fontWeight: 600 }}>
+                    ⚡ Upload Speed: {uploadSpeed.toFixed(2)} MB/s (calculated over 10s intervals)
+                  </p>
+                )}
+                <div className="progress-bar" style={{ marginTop: uploadSpeed !== null ? '0' : '0.75rem' }}>
                   <div className="progress-fill" style={{ width: `${progress}%` }}></div>
                 </div>
               </div>

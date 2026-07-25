@@ -21,10 +21,12 @@ import (
 )
 
 type UploadSession struct {
-	ID        string
-	Filename  string
-	TotalSize int64
-	ChunkDir  string
+	ID                  string
+	Filename            string
+	TotalSize           int64
+	ChunkDir            string
+	BytesSinceLastCheck int64
+	LastSpeedCheck      time.Time
 }
 
 type UploadService interface {
@@ -147,10 +149,12 @@ func (s *uploadService) InitUpload(filename string, totalSize int64, fingerprint
 	}
 
 	session := &UploadSession{
-		ID:        uploadID,
-		Filename:  filename,
-		TotalSize: totalSize,
-		ChunkDir:  chunkDir,
+		ID:                  uploadID,
+		Filename:            filename,
+		TotalSize:           totalSize,
+		ChunkDir:            chunkDir,
+		BytesSinceLastCheck: 0,
+		LastSpeedCheck:      time.Now(),
 	}
 
 	s.mu.Lock()
@@ -195,10 +199,12 @@ func (s *uploadService) StoreChunk(uploadID string, chunkIdx int, src io.Reader)
 		dl, err := s.downloadRepo.FindByID(uploadID)
 		if err == nil && dl != nil && dl.Type == "upload" {
 			session = &UploadSession{
-				ID:        uploadID,
-				Filename:  dl.Title,
-				TotalSize: dl.TotalSize,
-				ChunkDir:  filepath.Join(s.config.UploadDir, uploadID),
+				ID:                  uploadID,
+				Filename:            dl.Title,
+				TotalSize:           dl.TotalSize,
+				ChunkDir:            filepath.Join(s.config.UploadDir, uploadID),
+				BytesSinceLastCheck: 0,
+				LastSpeedCheck:      time.Now(),
 			}
 			s.sessions[uploadID] = session
 			exists = true
@@ -221,6 +227,24 @@ func (s *uploadService) StoreChunk(uploadID string, chunkIdx int, src io.Reader)
 		return fmt.Errorf("write chunk file: %w", err)
 	}
 
+	// Update progress and speed calculations
+	var chunkSize int64
+	if stat, statErr := os.Stat(chunkPath); statErr == nil {
+		chunkSize = stat.Size()
+	}
+
+	s.mu.Lock()
+	session.BytesSinceLastCheck += chunkSize
+	var newSpeed float64 = 0.0
+	var updateSpeed = false
+	if time.Since(session.LastSpeedCheck) >= 10*time.Second {
+		newSpeed = float64(session.BytesSinceLastCheck) / 10.0 // bytes per second over 10s window
+		session.BytesSinceLastCheck = 0
+		session.LastSpeedCheck = time.Now()
+		updateSpeed = true
+	}
+	s.mu.Unlock()
+
 	// Update download/upload task progress in database
 	chunks, err := s.getUploadedChunks(uploadID)
 	if err == nil {
@@ -240,6 +264,9 @@ func (s *uploadService) StoreChunk(uploadID string, chunkIdx int, src io.Reader)
 				if dl.Progress > 100 {
 					dl.Progress = 100
 				}
+			}
+			if updateSpeed {
+				dl.DownloadSpeed = newSpeed
 			}
 			dl.UpdatedAt = time.Now()
 			_ = s.downloadRepo.Update(dl)

@@ -741,10 +741,10 @@ export const AdminPage: React.FC<AdminPageProps> = ({ onBack }) => {
                         )}
                         <div className="dl-metrics-row">
                           <span>{dl.progress.toFixed(1)}%</span>
-                          {dl.status === 'downloading' && (
+                          {(dl.status === 'downloading' || dl.status === 'uploading') && (
                             <>
                               <span><strong>Speed:</strong> {formatSpeed(dl.download_speed)}</span>
-                              {dl.eta && <span><strong>ETA:</strong> {dl.eta}</span>}
+                              {dl.status === 'downloading' && dl.eta && <span><strong>ETA:</strong> {dl.eta}</span>}
                             </>
                           )}
                           <span>{formatSize(dl.completed_size)} / {formatSize(dl.total_size)}</span>
