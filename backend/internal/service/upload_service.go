@@ -5,10 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"os"
 	"path/filepath"
-	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -42,6 +39,7 @@ type uploadService struct {
 	prefRepo     repository.PreferenceRepository
 	downloadRepo repository.DownloadRepository
 	sessions     map[string]*UploadSession
+	storage      ChunkStorageAdapter
 	mu           sync.RWMutex
 }
 
@@ -51,13 +49,19 @@ func NewUploadService(
 	prefRepo repository.PreferenceRepository,
 	downloadRepo repository.DownloadRepository,
 ) UploadService {
-	return &uploadService{
+	s := &uploadService{
 		config:       cfg,
 		repo:         repo,
 		prefRepo:     prefRepo,
 		downloadRepo: downloadRepo,
 		sessions:     make(map[string]*UploadSession),
 	}
+
+	// Use TTL-based In-Memory Cache Chunk Storage Adapter (TTL: 30 mins)
+	// Can be swapped with NewFileChunkStorageAdapter(cfg.UploadDir, s.sessions, &s.mu) for disk-based chunking
+	s.storage = NewInMemoryChunkStorageAdapter(30*time.Minute, s.sessions, &s.mu)
+
+	return s
 }
 
 func (s *uploadService) getMediaDir() string {
@@ -113,25 +117,7 @@ func (s *uploadService) CheckUpload(fingerprint string) (string, []int, bool, er
 }
 
 func (s *uploadService) getUploadedChunks(uploadID string) ([]int, error) {
-	chunkDir := filepath.Join(s.config.UploadDir, uploadID)
-	entries, err := os.ReadDir(chunkDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return []int{}, nil
-		}
-		return nil, err
-	}
-
-	var chunks []int
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			if idx, err := strconv.Atoi(entry.Name()); err == nil {
-				chunks = append(chunks, idx)
-			}
-		}
-	}
-	sort.Ints(chunks)
-	return chunks, nil
+	return s.storage.GetUploadedChunks(uploadID)
 }
 
 func (s *uploadService) InitUpload(filename string, totalSize int64, fingerprint string, device string) (string, error) {
@@ -143,10 +129,6 @@ func (s *uploadService) InitUpload(filename string, totalSize int64, fingerprint
 
 	uploadID := uuid.New().String()
 	chunkDir := filepath.Join(s.config.UploadDir, uploadID)
-
-	if err := os.MkdirAll(chunkDir, 0755); err != nil {
-		return "", fmt.Errorf("create chunk directory: %w", err)
-	}
 
 	session := &UploadSession{
 		ID:                  uploadID,
@@ -216,25 +198,12 @@ func (s *uploadService) StoreChunk(uploadID string, chunkIdx int, src io.Reader)
 		return fmt.Errorf("upload session not found")
 	}
 
-	chunkPath := filepath.Join(session.ChunkDir, strconv.Itoa(chunkIdx))
-	destFile, err := os.Create(chunkPath)
-	if err != nil {
-		return fmt.Errorf("create chunk file: %w", err)
-	}
-	defer destFile.Close()
-
-	if _, err := io.Copy(destFile, src); err != nil {
-		return fmt.Errorf("write chunk file: %w", err)
+	if err := s.storage.StoreChunk(uploadID, chunkIdx, src); err != nil {
+		return err
 	}
 
 	// Update progress and speed calculations
-	var chunkSize int64
-	if stat, statErr := os.Stat(chunkPath); statErr == nil {
-		chunkSize = stat.Size()
-	}
-
 	s.mu.Lock()
-	session.BytesSinceLastCheck += chunkSize
 	var newSpeed float64 = 0.0
 	var updateSpeed = false
 	if time.Since(session.LastSpeedCheck) >= 10*time.Second {
@@ -250,12 +219,9 @@ func (s *uploadService) StoreChunk(uploadID string, chunkIdx int, src io.Reader)
 	if err == nil {
 		dl, err := s.downloadRepo.FindByID(uploadID)
 		if err == nil && dl != nil {
-			var completedSize int64
-			for _, cIdx := range chunks {
-				cPath := filepath.Join(session.ChunkDir, strconv.Itoa(cIdx))
-				if stat, statErr := os.Stat(cPath); statErr == nil {
-					completedSize += stat.Size()
-				}
+			var completedSize int64 = int64(len(chunks)) * 5242880 // 5MB per chunk approx
+			if completedSize > dl.TotalSize && dl.TotalSize > 0 {
+				completedSize = dl.TotalSize
 			}
 
 			dl.CompletedSize = completedSize
@@ -299,63 +265,18 @@ func (s *uploadService) CompleteUpload(ctx context.Context, uploadID string) (*m
 		return nil, fmt.Errorf("upload session not found")
 	}
 
-	defer os.RemoveAll(session.ChunkDir)
+	defer s.storage.Cleanup(uploadID)
 
 	// Remove from downloads repository database so task disappears from queue
 	_ = s.downloadRepo.Delete(uploadID)
 
-	// List all files in the chunk directory
-	entries, err := os.ReadDir(session.ChunkDir)
-	if err != nil {
-		return nil, fmt.Errorf("read chunk directory: %w", err)
-	}
-
-	// Filter and sort chunk files numerically
-	var chunkFiles []string
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			if _, err := strconv.Atoi(entry.Name()); err == nil {
-				chunkFiles = append(chunkFiles, entry.Name())
-			}
-		}
-	}
-
-	sort.Slice(chunkFiles, func(i, j int) bool {
-		valI, _ := strconv.Atoi(chunkFiles[i])
-		valJ, _ := strconv.Atoi(chunkFiles[j])
-		return valI < valJ
-	})
-
-	if len(chunkFiles) == 0 {
-		return nil, fmt.Errorf("no chunk files found to assemble")
-	}
-
 	// Create a unique destination file path in MediaDir
 	destPath := getUniqueFilePath(s.getMediaDir(), session.Filename)
-	destFile, err := os.Create(destPath)
-	if err != nil {
-		return nil, fmt.Errorf("create destination file: %w", err)
-	}
-	defer destFile.Close()
 
-	// Merge all chunk files
-	for _, filename := range chunkFiles {
-		chunkPath := filepath.Join(session.ChunkDir, filename)
-		chunkFile, err := os.Open(chunkPath)
-		if err != nil {
-			return nil, fmt.Errorf("open chunk file %s: %w", filename, err)
-		}
-		_, err = io.Copy(destFile, chunkFile)
-		chunkFile.Close()
-		if err != nil {
-			return nil, fmt.Errorf("append chunk %s: %w", filename, err)
-		}
-	}
-
-	// Now ingest the file to database
-	info, err := destFile.Stat()
+	// Assemble and write all chunks using storage adapter
+	fileSize, err := s.storage.AssembleAndSave(ctx, uploadID, destPath)
 	if err != nil {
-		return nil, fmt.Errorf("stat merged file: %w", err)
+		return nil, fmt.Errorf("assemble chunks: %w", err)
 	}
 
 	filename := filepath.Base(destPath)
@@ -383,7 +304,7 @@ func (s *uploadService) CompleteUpload(ctx context.Context, uploadID string) (*m
 		Year:          meta.Year,
 		Quality:       meta.Quality,
 		FilePath:      destPath,
-		FileSize:      info.Size(),
+		FileSize:      fileSize,
 		Duration:      0,
 		MimeType:      mimeType,
 		ThumbnailPath: "",

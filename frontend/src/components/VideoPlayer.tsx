@@ -638,6 +638,15 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         }} 
       />
 
+      {/* Top Left Back Button */}
+      <button 
+        className="btn-player-back" 
+        onClick={handleExitPlayer}
+        title="Back to Home"
+      >
+        ← Back
+      </button>
+
       {/* Control overlay bar for Video Mode with Playlist buttons (Desktop) */}
       {!isTvMode && !soundOnly && (
         <div className="player-playlist-controls-overlay">

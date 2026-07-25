@@ -459,47 +459,76 @@ export const UploadModal: React.FC<UploadModalProps> = ({ onClose, onUploadSucce
           uploadID = initJson.data.upload_id;
         }
 
-        // Step 2: Upload Chunks Sequentially
-        for (let chunkIdx = 0; chunkIdx < totalChunks; chunkIdx++) {
-          if (isCancelledRef.current) return;
+        // Step 2: Upload Chunks in Parallel (Concurrency Limit: 5)
+        const CONCURRENCY_LIMIT = 5;
+        const pendingChunks: number[] = [];
+        let completedChunksCount = 0;
 
-          if (uploadedChunks.includes(chunkIdx)) {
-            setProgress(Math.round(((chunkIdx + 1) / totalChunks) * 100));
-            continue;
+        for (let idx = 0; idx < totalChunks; idx++) {
+          if (uploadedChunks.includes(idx)) {
+            completedChunksCount++;
+          } else {
+            pendingChunks.push(idx);
           }
-
-          const start = chunkIdx * CHUNK_SIZE;
-          const end = Math.min(file.size, start + CHUNK_SIZE);
-          const chunkBlob = file.slice(start, end);
-
-          const formData = new FormData();
-          formData.append('chunk', chunkBlob);
-          formData.append('index', chunkIdx.toString());
-
-          const chunkRes = await fetch(`${API_BASE}/upload/${uploadID}/chunk`, {
-            method: 'POST',
-            body: formData
-          });
-
-          if (!chunkRes.ok) throw new Error(`Chunk ${chunkIdx} upload failed`);
-
-          // Update speed calculations
-          const chunkSizeUploaded = chunkBlob.size;
-          bytesUploadedInWindowRef.current += chunkSizeUploaded;
-          
-          const nowTime = Date.now();
-          const elapsed = nowTime - lastSpeedCheckTimeRef.current;
-          if (elapsed >= 10000) { // 10 seconds window
-            const mbUploaded = bytesUploadedInWindowRef.current / (1024 * 1024);
-            const calculatedSpeed = mbUploaded / 10;
-            setUploadSpeed(calculatedSpeed);
-            
-            bytesUploadedInWindowRef.current = 0;
-            lastSpeedCheckTimeRef.current = nowTime;
-          }
-
-          setProgress(Math.round(((chunkIdx + 1) / totalChunks) * 100));
         }
+
+        // Set initial progress including already uploaded chunks
+        setProgress(Math.round((completedChunksCount / totalChunks) * 100));
+
+        let pendingIndex = 0;
+
+        const uploadWorker = async () => {
+          while (pendingIndex < pendingChunks.length) {
+            if (isCancelledRef.current) return;
+
+            const chunkIdx = pendingChunks[pendingIndex];
+            pendingIndex++;
+
+            const start = chunkIdx * CHUNK_SIZE;
+            const end = Math.min(file.size, start + CHUNK_SIZE);
+            const chunkBlob = file.slice(start, end);
+
+            const formData = new FormData();
+            formData.append('chunk', chunkBlob);
+            formData.append('index', chunkIdx.toString());
+
+            const chunkRes = await fetch(`${API_BASE}/upload/${uploadID}/chunk`, {
+              method: 'POST',
+              body: formData
+            });
+
+            if (!chunkRes.ok) throw new Error(`Chunk ${chunkIdx} upload failed`);
+
+            completedChunksCount++;
+
+            // Update speed calculations
+            const chunkSizeUploaded = chunkBlob.size;
+            bytesUploadedInWindowRef.current += chunkSizeUploaded;
+            
+            const nowTime = Date.now();
+            const elapsed = nowTime - lastSpeedCheckTimeRef.current;
+            if (elapsed >= 10000) { // 10 seconds window
+              const mbUploaded = bytesUploadedInWindowRef.current / (1024 * 1024);
+              const calculatedSpeed = mbUploaded / (elapsed / 1000);
+              setUploadSpeed(calculatedSpeed);
+              
+              bytesUploadedInWindowRef.current = 0;
+              lastSpeedCheckTimeRef.current = nowTime;
+            }
+
+            setProgress(Math.round((completedChunksCount / totalChunks) * 100));
+          }
+        };
+
+        // Run worker pool in parallel
+        const workers: Promise<void>[] = [];
+        const numWorkers = Math.min(CONCURRENCY_LIMIT, pendingChunks.length);
+        for (let i = 0; i < numWorkers; i++) {
+          workers.push(uploadWorker());
+        }
+
+        await Promise.all(workers);
+        if (isCancelledRef.current) return;
 
         // Step 3: Finalize Upload
         const completeRes = await fetch(`${API_BASE}/upload/${uploadID}/complete`, {

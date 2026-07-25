@@ -13,7 +13,9 @@ type UploadController struct {
 }
 
 func NewUploadController(uploadService service.UploadService) *UploadController {
-	return &UploadController{uploadService: uploadService}
+	return &UploadController{
+		uploadService: uploadService,
+	}
 }
 
 type InitUploadInput struct {
