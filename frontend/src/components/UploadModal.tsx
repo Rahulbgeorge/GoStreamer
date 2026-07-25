@@ -20,6 +20,20 @@ export const UploadModal: React.FC<UploadModalProps> = ({ onClose, onUploadSucce
   } | null>(null);
   const [progress, setProgress] = useState<number>(0);
   const [status, setStatus] = useState<'idle' | 'uploading' | 'complete' | 'error'>('idle');
+  const [cooloffRemaining, setCooloffRemaining] = useState<number>(0);
+
+  // Auto-resume refs
+  const retryCountInWindowRef = useRef<number>(0);
+  const windowStartTimeRef = useRef<number>(0);
+  const cooloffEndTimeRef = useRef<number>(0);
+  const isCancelledRef = useRef<boolean>(false);
+
+  useEffect(() => {
+    isCancelledRef.current = false;
+    return () => {
+      isCancelledRef.current = true;
+    };
+  }, []);
 
   const [activeTab, setActiveTab] = useState<'upload' | 'torrent' | 'scan' | 'youtube' | 'settings'>('upload');
   const [magnetUrl, setMagnetUrl] = useState('');
@@ -386,68 +400,130 @@ export const UploadModal: React.FC<UploadModalProps> = ({ onClose, onUploadSucce
       deviceName = 'Linux Client';
     }
 
-    try {
-      let uploadID = '';
-      let uploadedChunks: number[] = [];
+    // Loop until complete or cancelled or persistent error
+    while (!isCancelledRef.current) {
+      const now = Date.now();
 
-      if (resumeData && resumeData.exists && !forceFresh) {
-        uploadID = resumeData.uploadId;
-        uploadedChunks = resumeData.uploadedChunks;
-        console.log(`Resuming upload: ${uploadID}. Skipping chunks:`, uploadedChunks);
+      // 1. Check if in cool-off period
+      if (cooloffEndTimeRef.current > 0 && now < cooloffEndTimeRef.current) {
+        const remainingSec = Math.ceil((cooloffEndTimeRef.current - now) / 1000);
+        setCooloffRemaining(remainingSec);
+        if (status !== 'error') {
+          setStatus('error');
+        }
+        console.log(`Cooling off. Retrying in ${remainingSec} seconds...`);
+        // Wait 1 second before checking again
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        continue;
       } else {
-        // Step 1: Initialize fresh Upload session
-        const initRes = await fetch(`${API_BASE}/upload/init`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ 
-            filename: file.name, 
-            total_size: file.size,
-            fingerprint: forceFresh ? `${fingerprint}_fresh_${Date.now()}` : fingerprint,
-            device: deviceName
-          })
-        });
-        if (!initRes.ok) throw new Error("Initialization failed");
-        const initJson = await initRes.json();
-        uploadID = initJson.data.upload_id;
+        if (cooloffRemaining > 0) {
+          setCooloffRemaining(0);
+        }
       }
 
-      // Step 2: Upload Chunks Sequentially
-      for (let chunkIdx = 0; chunkIdx < totalChunks; chunkIdx++) {
-        if (uploadedChunks.includes(chunkIdx)) {
-          // Skip already uploaded chunks
-          setProgress(Math.round(((chunkIdx + 1) / totalChunks) * 100));
-          continue;
+      try {
+        let uploadID = '';
+        let uploadedChunks: number[] = [];
+
+        // Check if there is an existing session to resume
+        const checkRes = await fetch(`${API_BASE}/upload/check?fingerprint=${encodeURIComponent(fingerprint)}`);
+        if (!checkRes.ok) throw new Error("Check session failed");
+        const checkJson = await checkRes.json();
+
+        if (checkJson.data && checkJson.data.exists && !forceFresh) {
+          uploadID = checkJson.data.upload_id;
+          uploadedChunks = checkJson.data.uploaded_chunks || [];
+          console.log(`Resuming upload: ${uploadID}. Skipping chunks:`, uploadedChunks);
+        } else {
+          // Initialize fresh session
+          const initRes = await fetch(`${API_BASE}/upload/init`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+              filename: file.name, 
+              total_size: file.size,
+              fingerprint: forceFresh ? `${fingerprint}_fresh_${Date.now()}` : fingerprint,
+              device: deviceName
+            })
+          });
+          if (!initRes.ok) throw new Error("Initialization failed");
+          const initJson = await initRes.json();
+          uploadID = initJson.data.upload_id;
         }
 
-        const start = chunkIdx * CHUNK_SIZE;
-        const end = Math.min(file.size, start + CHUNK_SIZE);
-        const chunkBlob = file.slice(start, end);
+        // Step 2: Upload Chunks Sequentially
+        for (let chunkIdx = 0; chunkIdx < totalChunks; chunkIdx++) {
+          if (isCancelledRef.current) return;
 
-        const formData = new FormData();
-        formData.append('chunk', chunkBlob);
-        formData.append('index', chunkIdx.toString());
+          if (uploadedChunks.includes(chunkIdx)) {
+            setProgress(Math.round(((chunkIdx + 1) / totalChunks) * 100));
+            continue;
+          }
 
-        const chunkRes = await fetch(`${API_BASE}/upload/${uploadID}/chunk`, {
-          method: 'POST',
-          body: formData
+          const start = chunkIdx * CHUNK_SIZE;
+          const end = Math.min(file.size, start + CHUNK_SIZE);
+          const chunkBlob = file.slice(start, end);
+
+          const formData = new FormData();
+          formData.append('chunk', chunkBlob);
+          formData.append('index', chunkIdx.toString());
+
+          const chunkRes = await fetch(`${API_BASE}/upload/${uploadID}/chunk`, {
+            method: 'POST',
+            body: formData
+          });
+
+          if (!chunkRes.ok) throw new Error(`Chunk ${chunkIdx} upload failed`);
+
+          setProgress(Math.round(((chunkIdx + 1) / totalChunks) * 100));
+        }
+
+        // Step 3: Finalize Upload
+        const completeRes = await fetch(`${API_BASE}/upload/${uploadID}/complete`, {
+          method: 'POST'
         });
+        if (!completeRes.ok) throw new Error("Assembly finalization failed");
 
-        if (!chunkRes.ok) throw new Error("Chunk upload failed");
+        // Reset tracking upon successful upload
+        setStatus('complete');
+        retryCountInWindowRef.current = 0;
+        windowStartTimeRef.current = 0;
+        cooloffEndTimeRef.current = 0;
+        onUploadSuccess();
+        break; // Exit retry loop
 
-        setProgress(Math.round(((chunkIdx + 1) / totalChunks) * 100));
+      } catch (err) {
+        console.error("Upload error caught:", err);
+        if (isCancelledRef.current) return;
+
+        const failTime = Date.now();
+        
+        // Start retry window if not initialized
+        if (windowStartTimeRef.current === 0) {
+          windowStartTimeRef.current = failTime;
+          retryCountInWindowRef.current = 0;
+        }
+
+        // Reset if window has expired (30 seconds)
+        if (failTime - windowStartTimeRef.current > 30000) {
+          windowStartTimeRef.current = failTime;
+          retryCountInWindowRef.current = 0;
+        }
+
+        if (retryCountInWindowRef.current < 10) {
+          retryCountInWindowRef.current += 1;
+          console.warn(`Auto-resume retry attempt ${retryCountInWindowRef.current}/10 in 30s window. Waiting 1 second...`);
+          setStatus('uploading'); // Ensure uploading is visible
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        } else {
+          // Enter 10-minute cooloff
+          console.error("Exceeded 10 retries in 30 seconds. Entering 10-minute cooloff period.");
+          cooloffEndTimeRef.current = failTime + 10 * 60 * 1000;
+          windowStartTimeRef.current = cooloffEndTimeRef.current; // Reset window start point for after cooloff
+          retryCountInWindowRef.current = 0;
+          setStatus('error');
+        }
       }
-
-      // Step 3: Finalize Upload
-      const completeRes = await fetch(`${API_BASE}/upload/${uploadID}/complete`, {
-        method: 'POST'
-      });
-      if (!completeRes.ok) throw new Error("Assembly finalization failed");
-
-      setStatus('complete');
-      onUploadSuccess();
-    } catch (err) {
-      console.error(err);
-      setStatus('error');
     }
   };
 
@@ -557,8 +633,25 @@ export const UploadModal: React.FC<UploadModalProps> = ({ onClose, onUploadSucce
             )}
 
             {status === 'error' && (
-              <div className="upload-result">
-                <p style={{ color: 'var(--accent)' }}>Failed to upload. Try checking network connection.</p>
+              <div className="upload-result" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1rem' }}>
+                {cooloffRemaining > 0 ? (
+                  <p style={{ color: 'orange', fontWeight: 'bold', margin: 0 }}>
+                    ⚠️ Repeated upload failures. Auto-resuming in {Math.floor(cooloffRemaining / 60)}m {cooloffRemaining % 60}s...
+                  </p>
+                ) : (
+                  <p style={{ color: 'var(--accent)', margin: 0 }}>Failed to upload. Try checking network connection.</p>
+                )}
+                <button 
+                  className="btn-upload" 
+                  onClick={() => {
+                    cooloffEndTimeRef.current = 0;
+                    setCooloffRemaining(0);
+                    startUpload(false);
+                  }}
+                  style={{ width: 'auto', padding: '0.5rem 1.5rem' }}
+                >
+                  🔄 Retry Now
+                </button>
               </div>
             )}
           </div>
