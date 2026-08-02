@@ -222,8 +222,22 @@ export const mediaService = {
     return res.ok;
   },
 
-  getClipThumbnailUrl(id: string): string {
-    return `${API_BASE}/clips/${id}/thumbnail`;
+  getClipThumbnailUrl(clipId: string): string {
+    return `${API_BASE}/clips/${clipId}/thumbnail`;
+  },
+
+  getClipDownloadUrl(clipId: string): string {
+    return `${API_BASE}/clips/${clipId}/download`;
+  },
+
+  async saveClipToLibrary(clipId: string): Promise<any> {
+    const res = await fetch(`${API_BASE}/clips/${clipId}/save`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || 'Failed to save clip to library');
+    return json;
   },
 
   async downloadTorrent(magnetUrl: string): Promise<Media> {

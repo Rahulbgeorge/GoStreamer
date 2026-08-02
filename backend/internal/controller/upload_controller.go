@@ -23,6 +23,7 @@ type InitUploadInput struct {
 	TotalSize   int64  `json:"total_size" binding:"required"`
 	Fingerprint string `json:"fingerprint"`
 	Device      string `json:"device"`
+	ChunkSize   int64  `json:"chunk_size"`
 }
 
 func (ctrl *UploadController) CheckUpload(c *gin.Context) {
@@ -32,7 +33,7 @@ func (ctrl *UploadController) CheckUpload(c *gin.Context) {
 		return
 	}
 
-	uploadID, uploadedChunks, exists, err := ctrl.uploadService.CheckUpload(fingerprint)
+	uploadID, uploadedChunks, chunkSize, exists, err := ctrl.uploadService.CheckUpload(fingerprint)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -43,7 +44,7 @@ func (ctrl *UploadController) CheckUpload(c *gin.Context) {
 			"exists":          exists,
 			"upload_id":       uploadID,
 			"uploaded_chunks": uploadedChunks,
-			"chunk_size":      5242880, // 5MB
+			"chunk_size":      chunkSize,
 		},
 	})
 }
@@ -60,7 +61,7 @@ func (ctrl *UploadController) InitUpload(c *gin.Context) {
 		device = c.Request.UserAgent()
 	}
 
-	uploadID, err := ctrl.uploadService.InitUpload(input.Filename, input.TotalSize, input.Fingerprint, device)
+	uploadID, err := ctrl.uploadService.InitUpload(input.Filename, input.TotalSize, input.Fingerprint, device, input.ChunkSize)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

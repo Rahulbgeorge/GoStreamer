@@ -98,8 +98,6 @@ export const AdminPage: React.FC<AdminPageProps> = ({ onBack }) => {
 
   useEffect(() => {
     fetchLibraryData();
-    const interval = setInterval(fetchLibraryData, 3000);
-    return () => clearInterval(interval);
   }, []);
 
   const selectedMedia = mediaList.find(m => m.id === selectedMediaId) || null;
@@ -224,6 +222,17 @@ export const AdminPage: React.FC<AdminPageProps> = ({ onBack }) => {
     }
   };
 
+  const handleSaveClipToLibrary = async (clipId: string) => {
+    try {
+      const res = await mediaService.saveClipToLibrary(clipId);
+      showStatus(res.message || "Clip saved successfully to local library!", 'success');
+      const allMedia = await mediaService.getAllMedia();
+      setMediaList(allMedia);
+    } catch (err: any) {
+      showStatus(`Failed to save clip: ${err.message}`, 'error');
+    }
+  };
+
   const handleDeleteCategory = async (catId: string, catName: string) => {
     if (window.confirm(`Delete category "${catName}"? Clips will remain intact.`)) {
       try {
@@ -314,11 +323,18 @@ export const AdminPage: React.FC<AdminPageProps> = ({ onBack }) => {
             </div>
           )}
           <button 
+            className="btn-scan-trigger"
+            style={{ background: 'rgba(255, 255, 255, 0.1)', color: '#fff', border: '1px solid rgba(255, 255, 255, 0.15)', marginRight: '10px' }}
+            onClick={fetchLibraryData}
+          >
+            🔄 Refresh Stats & List
+          </button>
+          <button 
             className={`btn-scan-trigger ${scanning ? 'loading' : ''}`} 
             onClick={handleTriggerScan}
             disabled={scanning}
           >
-            🔄 {scanning ? 'Scanning...' : 'Trigger Rescan'}
+            🔍 {scanning ? 'Scanning...' : 'Trigger Rescan'}
           </button>
         </div>
       </header>
@@ -625,6 +641,23 @@ export const AdminPage: React.FC<AdminPageProps> = ({ onBack }) => {
                         <button className="btn-play-clip" onClick={() => setPlayingClip(clip)}>
                           ▶️ Play Clip
                         </button>
+                        <button 
+                          className="btn-play-clip"
+                          style={{ background: '#10b981', color: '#fff', padding: '0.4rem 0.8rem', border: 'none', borderRadius: '6px', fontSize: '0.85rem', fontWeight: 600, cursor: 'pointer' }}
+                          onClick={() => handleSaveClipToLibrary(clip.id)}
+                          title="Save Clip to App Library on Device"
+                        >
+                          💾 Save to Library
+                        </button>
+                        <a 
+                          href={mediaService.getClipDownloadUrl(clip.id)} 
+                          download 
+                          className="btn-play-clip"
+                          style={{ textDecoration: 'none', background: '#3b82f6', color: '#fff', padding: '0.4rem 0.8rem', borderRadius: '6px', fontSize: '0.85rem', fontWeight: 600 }}
+                          title="Download Clip MP4"
+                        >
+                          ⬇️ Download Clip
+                        </a>
                         <button className="btn-delete-clip" onClick={() => handleDeleteClip(clip.id)}>
                           🗑️ Delete
                         </button>

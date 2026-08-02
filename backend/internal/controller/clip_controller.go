@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -12,23 +13,42 @@ import (
 	"streamingplayer/internal/config"
 	"streamingplayer/internal/model"
 	"streamingplayer/internal/repository"
+	"streamingplayer/internal/service"
 	"streamingplayer/pkg/thumbnail"
 
 	"github.com/gin-gonic/gin"
 )
 
 type ClipController struct {
-	cfg       *config.Config
-	clipRepo  repository.ClipRepository
-	mediaRepo repository.MediaRepository
+	cfg            *config.Config
+	clipRepo       repository.ClipRepository
+	mediaRepo      repository.MediaRepository
+	prefRepo       repository.PreferenceRepository
+	scannerService service.ScannerService
 }
 
-func NewClipController(cfg *config.Config, clipRepo repository.ClipRepository, mediaRepo repository.MediaRepository) *ClipController {
+func NewClipController(
+	cfg *config.Config,
+	clipRepo repository.ClipRepository,
+	mediaRepo repository.MediaRepository,
+	prefRepo repository.PreferenceRepository,
+	scannerService service.ScannerService,
+) *ClipController {
 	return &ClipController{
-		cfg:       cfg,
-		clipRepo:  clipRepo,
-		mediaRepo: mediaRepo,
+		cfg:            cfg,
+		clipRepo:       clipRepo,
+		mediaRepo:      mediaRepo,
+		prefRepo:       prefRepo,
+		scannerService: scannerService,
 	}
+}
+
+func (ctrl *ClipController) getMediaDir() string {
+	pref, err := ctrl.prefRepo.Get("homedir")
+	if err == nil && pref != nil && pref.Value != "" {
+		return pref.Value
+	}
+	return ctrl.cfg.MediaDir
 }
 
 // GetClips handles GET /api/v1/clips?media_id=...&category_id=...
@@ -226,3 +246,176 @@ func (ctrl *ClipController) StreamClipThumbnail(c *gin.Context) {
 	c.Header("Cache-Control", "public, max-age=86400")
 	c.File(clip.ThumbnailPath)
 }
+
+// DownloadClip handles GET /api/v1/clips/:id/download
+func (ctrl *ClipController) DownloadClip(c *gin.Context) {
+	id := c.Param("id")
+	clip, err := ctrl.clipRepo.FindByID(id)
+	if err != nil || clip == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "clip not found"})
+		return
+	}
+
+	media, err := ctrl.mediaRepo.FindByID(clip.MediaID)
+	if err != nil || media == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "source media not found"})
+		return
+	}
+
+	if _, err := os.Stat(media.FilePath); os.IsNotExist(err) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "source media file on disk not found"})
+		return
+	}
+
+	safeTitle := strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+			return r
+		}
+		return '_'
+	}, clip.Title)
+	if safeTitle == "" {
+		safeTitle = "clip"
+	}
+	outFileName := fmt.Sprintf("%s.mp4", safeTitle)
+	tempClipPath := filepath.Join(os.TempDir(), fmt.Sprintf("export_%s_%d.mp4", clip.ID, time.Now().UnixNano()))
+	defer os.Remove(tempClipPath)
+
+	duration := clip.EndTime - clip.StartTime
+	if duration <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid clip duration"})
+		return
+	}
+
+	cmd := exec.CommandContext(c.Request.Context(), "ffmpeg",
+		"-y",
+		"-ss", fmt.Sprintf("%.3f", clip.StartTime),
+		"-i", media.FilePath,
+		"-t", fmt.Sprintf("%.3f", duration),
+		"-c", "copy",
+		tempClipPath,
+	)
+
+	if out, err := cmd.CombinedOutput(); err != nil {
+		slog.Warn("Fast clip stream copy failed, falling back to libx264 re-encode", "err", err, "out", string(out))
+		cmdFallback := exec.CommandContext(c.Request.Context(), "ffmpeg",
+			"-y",
+			"-ss", fmt.Sprintf("%.3f", clip.StartTime),
+			"-i", media.FilePath,
+			"-t", fmt.Sprintf("%.3f", duration),
+			"-c:v", "libx264",
+			"-c:a", "aac",
+			"-preset", "ultrafast",
+			tempClipPath,
+		)
+		if fbOut, fbErr := cmdFallback.CombinedOutput(); fbErr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("ffmpeg clip extraction failed: %v (%s)", fbErr, string(fbOut))})
+			return
+		}
+	}
+
+	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", outFileName))
+	c.Header("Content-Type", "video/mp4")
+	c.File(tempClipPath)
+}
+
+// SaveClipToLibrary handles POST /api/v1/clips/:id/save
+func (ctrl *ClipController) SaveClipToLibrary(c *gin.Context) {
+	id := c.Param("id")
+	clip, err := ctrl.clipRepo.FindByID(id)
+	if err != nil || clip == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "clip not found"})
+		return
+	}
+
+	media, err := ctrl.mediaRepo.FindByID(clip.MediaID)
+	if err != nil || media == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "source media not found"})
+		return
+	}
+
+	if _, err := os.Stat(media.FilePath); os.IsNotExist(err) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "source media file on disk not found"})
+		return
+	}
+
+	safeTitle := strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+			return r
+		}
+		return '_'
+	}, clip.Title)
+	if safeTitle == "" {
+		safeTitle = "clip"
+	}
+
+	mediaDir := ctrl.getMediaDir()
+	clipsDir := filepath.Join(mediaDir, "Clips")
+	if err := os.MkdirAll(clipsDir, 0755); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create Clips folder: " + err.Error()})
+		return
+	}
+
+	outFileName := fmt.Sprintf("%s.mp4", safeTitle)
+	destPath := filepath.Join(clipsDir, outFileName)
+
+	base := filepath.Base(destPath)
+	ext := filepath.Ext(base)
+	name := strings.TrimSuffix(base, ext)
+	counter := 1
+	for {
+		if _, err := os.Stat(destPath); os.IsNotExist(err) {
+			break
+		}
+		destPath = filepath.Join(clipsDir, fmt.Sprintf("%s_%d%s", name, counter, ext))
+		counter++
+	}
+
+	duration := clip.EndTime - clip.StartTime
+	if duration <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid clip duration"})
+		return
+	}
+
+	cmd := exec.CommandContext(c.Request.Context(), "ffmpeg",
+		"-y",
+		"-ss", fmt.Sprintf("%.3f", clip.StartTime),
+		"-i", media.FilePath,
+		"-t", fmt.Sprintf("%.3f", duration),
+		"-c", "copy",
+		destPath,
+	)
+
+	if out, err := cmd.CombinedOutput(); err != nil {
+		slog.Warn("Fast clip stream copy failed, falling back to libx264 re-encode", "err", err, "out", string(out))
+		cmdFallback := exec.CommandContext(c.Request.Context(), "ffmpeg",
+			"-y",
+			"-ss", fmt.Sprintf("%.3f", clip.StartTime),
+			"-i", media.FilePath,
+			"-t", fmt.Sprintf("%.3f", duration),
+			"-c:v", "libx264",
+			"-c:a", "aac",
+			"-preset", "ultrafast",
+			destPath,
+		)
+		if fbOut, fbErr := cmdFallback.CombinedOutput(); fbErr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("ffmpeg clip extraction failed: %v (%s)", fbErr, string(fbOut))})
+			return
+		}
+	}
+
+	// Ingest file into database catalog
+	ctrl.scannerService.IngestFile(c.Request.Context(), destPath)
+
+	newMedia, err := ctrl.mediaRepo.FindByFilePath(destPath)
+	if err != nil || newMedia == nil {
+		c.JSON(http.StatusOK, gin.H{"message": "Clip saved successfully to local library", "path": destPath})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Clip saved successfully to local library",
+		"media":   newMedia,
+	})
+}
+
+

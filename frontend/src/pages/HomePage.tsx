@@ -79,6 +79,21 @@ export const HomePage: React.FC = () => {
     return clips;
   }, [clips, activeFilter]);
 
+  const handleSaveClipToLibrary = async (clipId: string) => {
+    try {
+      const res = await mediaService.saveClipToLibrary(clipId);
+      window.alert(res.message || "Clip saved successfully to local library!");
+      fetchLibraryData();
+      if (res.media) {
+        if (window.confirm("Would you like to play and loop the saved clip now?")) {
+          setActiveVideo(res.media);
+        }
+      }
+    } catch (err: any) {
+      window.alert("Failed to save clip to library: " + err.message);
+    }
+  };
+
   const fetchLibraryData = async () => {
     try {
       const data = await mediaService.getAllMedia();
@@ -419,7 +434,30 @@ export const HomePage: React.FC = () => {
                         </span>
                       </div>
                       <div className="home-clip-info">
-                        <h4>{clip.title}</h4>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <h4 style={{ margin: 0 }}>{clip.title}</h4>
+                          <div style={{ display: 'flex', gap: '8px' }}>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleSaveClipToLibrary(clip.id);
+                              }}
+                              title="Save Clip to App Library on Device"
+                              style={{ border: 'none', cursor: 'pointer', fontSize: '1.1rem', background: 'rgba(255,255,255,0.1)', padding: '4px 8px', borderRadius: '6px' }}
+                            >
+                              💾
+                            </button>
+                            <a 
+                              href={mediaService.getClipDownloadUrl(clip.id)} 
+                              download 
+                              onClick={(e) => e.stopPropagation()} 
+                              title="Download Clip File (.mp4) to PC"
+                              style={{ fontSize: '1.1rem', textDecoration: 'none', background: 'rgba(255,255,255,0.1)', padding: '4px 8px', borderRadius: '6px' }}
+                            >
+                              ⬇️
+                            </a>
+                          </div>
+                        </div>
                         {parentMedia && <p className="parent-title">🎥 {parentMedia.title}</p>}
                         <div className="home-clip-categories">
                           {clip.categories?.map(c => (

@@ -62,6 +62,8 @@ func setupRouter(
 	api.PUT("/clips/:id", clipCtrl.UpdateClip)
 	api.DELETE("/clips/:id", clipCtrl.DeleteClip)
 	api.GET("/clips/:id/thumbnail", clipCtrl.StreamClipThumbnail)
+	api.GET("/clips/:id/download", clipCtrl.DownloadClip)
+	api.POST("/clips/:id/save", clipCtrl.SaveClipToLibrary)
 
 	// Preferences Routes
 	api.GET("/preferences", prefCtrl.GetAllPreferences)

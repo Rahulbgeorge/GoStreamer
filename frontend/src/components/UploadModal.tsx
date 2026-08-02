@@ -33,8 +33,13 @@ export const UploadModal: React.FC<UploadModalProps> = ({ onClose, onUploadSucce
   const cooloffEndTimeRef = useRef<number>(0);
   const isCancelledRef = useRef<boolean>(false);
 
+  const [selectedChunkSize, setSelectedChunkSize] = useState<number>(1024 * 1024 * 5); // Default 5MB
+
   useEffect(() => {
     isCancelledRef.current = false;
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
     return () => {
       isCancelledRef.current = true;
     };
@@ -137,8 +142,16 @@ export const UploadModal: React.FC<UploadModalProps> = ({ onClose, onUploadSucce
   const [activeTorrents, setActiveTorrents] = useState<TorrentStatus[]>([]);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Poll for active torrent downloads
+  // Poll for active torrent downloads only when the torrent tab is active
   useEffect(() => {
+    if (activeTab !== 'torrent') {
+      if (pollRef.current) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+      return;
+    }
+
     const fetchTorrents = async () => {
       try {
         const statuses = await mediaService.listActiveTorrents();
@@ -152,9 +165,12 @@ export const UploadModal: React.FC<UploadModalProps> = ({ onClose, onUploadSucce
     pollRef.current = setInterval(fetchTorrents, 3000);
 
     return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
+      if (pollRef.current) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
     };
-  }, []);
+  }, [activeTab]);
 
   // Settings tab state
   const [currentPath, setCurrentPath] = useState<string>('');
@@ -350,33 +366,38 @@ export const UploadModal: React.FC<UploadModalProps> = ({ onClose, onUploadSucce
     }
   };
 
+  const updateResumeData = async (selectedFile: File, currentChunkSize: number) => {
+    const fingerprint = `${selectedFile.name}_${selectedFile.size}_${selectedFile.lastModified}`;
+    try {
+      const checkRes = await fetch(`${API_BASE}/upload/check?fingerprint=${encodeURIComponent(fingerprint)}`);
+      const checkJson = await checkRes.json();
+      if (checkJson.data && checkJson.data.exists) {
+        const CHUNK_SIZE = checkJson.data.chunk_size || currentChunkSize;
+        setSelectedChunkSize(CHUNK_SIZE);
+        const totalChunks = Math.ceil(selectedFile.size / CHUNK_SIZE);
+        const uploadedCount = (checkJson.data.uploaded_chunks || []).length;
+        const calculatedProgress = Math.round((uploadedCount / totalChunks) * 100);
+
+        setResumeData({
+          exists: true,
+          uploadId: checkJson.data.upload_id,
+          uploadedChunks: checkJson.data.uploaded_chunks || [],
+          progress: calculatedProgress
+        });
+      } else {
+        setResumeData(null);
+      }
+    } catch (err) {
+      console.error("Failed to check resumable upload:", err);
+    }
+  };
+
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       const selectedFile = e.target.files[0];
       setFile(selectedFile);
       setResumeData(null);
-
-      // Check if resumable
-      const fingerprint = `${selectedFile.name}_${selectedFile.size}_${selectedFile.lastModified}`;
-      try {
-        const checkRes = await fetch(`${API_BASE}/upload/check?fingerprint=${encodeURIComponent(fingerprint)}`);
-        const checkJson = await checkRes.json();
-        if (checkJson.data && checkJson.data.exists) {
-          const CHUNK_SIZE = Math.round(1024 * 1024 * 5); // 5MB Chunks
-          const totalChunks = Math.ceil(selectedFile.size / CHUNK_SIZE);
-          const uploadedCount = (checkJson.data.uploaded_chunks || []).length;
-          const calculatedProgress = Math.round((uploadedCount / totalChunks) * 100);
-
-          setResumeData({
-            exists: true,
-            uploadId: checkJson.data.upload_id,
-            uploadedChunks: checkJson.data.uploaded_chunks || [],
-            progress: calculatedProgress
-          });
-        }
-      } catch (err) {
-        console.error("Failed to check resumable upload:", err);
-      }
+      await updateResumeData(selectedFile, selectedChunkSize);
     }
   };
 
@@ -389,8 +410,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({ onClose, onUploadSucce
     bytesUploadedInWindowRef.current = 0;
     lastSpeedCheckTimeRef.current = Date.now();
 
-    const CHUNK_SIZE = Math.round(1024 * 1024 * 5); // 5MB Chunks
-    const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+    let activeChunkSize = selectedChunkSize;
     
     // Generate unique fingerprint
     const fingerprint = `${file.name}_${file.size}_${file.lastModified}`;
@@ -441,6 +461,10 @@ export const UploadModal: React.FC<UploadModalProps> = ({ onClose, onUploadSucce
         if (checkJson.data && checkJson.data.exists && !forceFresh) {
           uploadID = checkJson.data.upload_id;
           uploadedChunks = checkJson.data.uploaded_chunks || [];
+          if (checkJson.data.chunk_size) {
+            activeChunkSize = checkJson.data.chunk_size;
+            setSelectedChunkSize(activeChunkSize);
+          }
           console.log(`Resuming upload: ${uploadID}. Skipping chunks:`, uploadedChunks);
         } else {
           // Initialize fresh session
@@ -451,13 +475,16 @@ export const UploadModal: React.FC<UploadModalProps> = ({ onClose, onUploadSucce
               filename: file.name, 
               total_size: file.size,
               fingerprint: forceFresh ? `${fingerprint}_fresh_${Date.now()}` : fingerprint,
-              device: deviceName
+              device: deviceName,
+              chunk_size: activeChunkSize
             })
           });
           if (!initRes.ok) throw new Error("Initialization failed");
           const initJson = await initRes.json();
           uploadID = initJson.data.upload_id;
         }
+
+        const totalChunks = Math.ceil(file.size / activeChunkSize);
 
         // Step 2: Upload Chunks in Parallel (Concurrency Limit: 5)
         const CONCURRENCY_LIMIT = 5;
@@ -473,9 +500,24 @@ export const UploadModal: React.FC<UploadModalProps> = ({ onClose, onUploadSucce
         }
 
         // Set initial progress including already uploaded chunks
-        setProgress(Math.round((completedChunksCount / totalChunks) * 100));
+        const initialProgress = Math.round((completedChunksCount / totalChunks) * 100);
+        setProgress(initialProgress);
+
+        if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+          navigator.serviceWorker.controller.postMessage({
+            type: 'UPLOAD_PROGRESS',
+            payload: {
+              filename: file.name,
+              progress: initialProgress,
+              uploadedBytes: completedChunksCount * activeChunkSize,
+              totalBytes: file.size,
+              speed: null
+            }
+          });
+        }
 
         let pendingIndex = 0;
+        let currentSpeed: number | null = null;
 
         const uploadWorker = async () => {
           while (pendingIndex < pendingChunks.length) {
@@ -484,8 +526,8 @@ export const UploadModal: React.FC<UploadModalProps> = ({ onClose, onUploadSucce
             const chunkIdx = pendingChunks[pendingIndex];
             pendingIndex++;
 
-            const start = chunkIdx * CHUNK_SIZE;
-            const end = Math.min(file.size, start + CHUNK_SIZE);
+            const start = chunkIdx * activeChunkSize;
+            const end = Math.min(file.size, start + activeChunkSize);
             const chunkBlob = file.slice(start, end);
 
             const formData = new FormData();
@@ -507,16 +549,31 @@ export const UploadModal: React.FC<UploadModalProps> = ({ onClose, onUploadSucce
             
             const nowTime = Date.now();
             const elapsed = nowTime - lastSpeedCheckTimeRef.current;
-            if (elapsed >= 10000) { // 10 seconds window
+            if (elapsed >= 1000) { // 1 second window
               const mbUploaded = bytesUploadedInWindowRef.current / (1024 * 1024);
               const calculatedSpeed = mbUploaded / (elapsed / 1000);
               setUploadSpeed(calculatedSpeed);
+              currentSpeed = calculatedSpeed;
               
               bytesUploadedInWindowRef.current = 0;
               lastSpeedCheckTimeRef.current = nowTime;
             }
 
-            setProgress(Math.round((completedChunksCount / totalChunks) * 100));
+            const calculatedProgress = Math.round((completedChunksCount / totalChunks) * 100);
+            setProgress(calculatedProgress);
+
+            if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+              navigator.serviceWorker.controller.postMessage({
+                type: 'UPLOAD_PROGRESS',
+                payload: {
+                  filename: file.name,
+                  progress: calculatedProgress,
+                  uploadedBytes: completedChunksCount * activeChunkSize,
+                  totalBytes: file.size,
+                  speed: currentSpeed
+                }
+              });
+            }
           }
         };
 
@@ -541,6 +598,14 @@ export const UploadModal: React.FC<UploadModalProps> = ({ onClose, onUploadSucce
         retryCountInWindowRef.current = 0;
         windowStartTimeRef.current = 0;
         cooloffEndTimeRef.current = 0;
+
+        if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+          navigator.serviceWorker.controller.postMessage({
+            type: 'UPLOAD_COMPLETE',
+            payload: { filename: file.name }
+          });
+        }
+
         onUploadSuccess();
         break; // Exit retry loop
 
@@ -574,6 +639,13 @@ export const UploadModal: React.FC<UploadModalProps> = ({ onClose, onUploadSucce
           windowStartTimeRef.current = cooloffEndTimeRef.current; // Reset window start point for after cooloff
           retryCountInWindowRef.current = 0;
           setStatus('error');
+
+          if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+            navigator.serviceWorker.controller.postMessage({
+              type: 'UPLOAD_ERROR',
+              payload: { filename: file.name }
+            });
+          }
         }
       }
     }
@@ -644,6 +716,46 @@ export const UploadModal: React.FC<UploadModalProps> = ({ onClose, onUploadSucce
                 <p>{t('uploadHelp')}</p>
                 <input type="file" accept="video/*" onChange={handleFileChange} />
                 {file && (
+                  <div style={{ marginTop: '1.5rem', textAlign: 'left', width: '100%', maxWidth: '400px', margin: '1.5rem auto 0 auto' }}>
+                    <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600, fontSize: '0.9rem', color: '#e2e8f0' }}>
+                      Choose Upload Chunk Size:
+                    </label>
+                    <select
+                      value={selectedChunkSize}
+                      disabled={!!(resumeData && resumeData.exists)}
+                      onChange={async (e) => {
+                        const val = parseInt(e.target.value);
+                        setSelectedChunkSize(val);
+                        await updateResumeData(file, val);
+                      }}
+                      style={{
+                        width: '100%',
+                        padding: '0.6rem 0.8rem',
+                        borderRadius: '6px',
+                        border: '1px solid rgba(255, 255, 255, 0.15)',
+                        background: '#151525',
+                        color: '#fff',
+                        fontSize: '0.9rem',
+                        cursor: (resumeData && resumeData.exists) ? 'not-allowed' : 'pointer',
+                        opacity: (resumeData && resumeData.exists) ? 0.7 : 1,
+                        marginBottom: '0.5rem'
+                      }}
+                    >
+                      <option value={1024 * 1024 * 1}>1 MB</option>
+                      <option value={1024 * 1024 * 2}>2 MB</option>
+                      <option value={1024 * 1024 * 5}>5 MB (Default)</option>
+                      <option value={1024 * 1024 * 10}>10 MB</option>
+                      <option value={1024 * 1024 * 20}>20 MB</option>
+                      <option value={1024 * 1024 * 50}>50 MB</option>
+                    </select>
+                    {resumeData && resumeData.exists && (
+                      <span style={{ fontSize: '0.75rem', color: '#a0aec0', marginTop: '0.25rem', display: 'block', marginBottom: '1rem' }}>
+                        🔒 Chunk size is locked to match the existing upload session.
+                      </span>
+                    )}
+                  </div>
+                )}
+                {file && (
                   <div className="upload-buttons-container" style={{ marginTop: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                     {resumeData && resumeData.exists ? (
                       <div className="resume-prompt-card" style={{ backgroundColor: 'rgba(255, 165, 0, 0.12)', border: '1px solid rgba(255, 165, 0, 0.3)', padding: '1rem', borderRadius: '8px', textAlign: 'left' }}>
@@ -674,7 +786,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({ onClose, onUploadSucce
                 <p style={{ margin: 0 }}>Uploading... {progress}% ({((Math.min(file.size, (progress / 100) * file.size)) / (1024 * 1024)).toFixed(1)} MB / {(file.size / (1024 * 1024)).toFixed(1)} MB)</p>
                 {uploadSpeed !== null && (
                   <p style={{ fontSize: '0.85rem', color: '#a0aec0', marginTop: '0.25rem', marginBottom: '0.5rem', fontWeight: 600 }}>
-                    ⚡ Upload Speed: {uploadSpeed.toFixed(2)} MB/s (calculated over 10s intervals)
+                    ⚡ Upload Speed: {uploadSpeed.toFixed(2)} MB/s
                   </p>
                 )}
                 <div className="progress-bar" style={{ marginTop: uploadSpeed !== null ? '0' : '0.75rem' }}>

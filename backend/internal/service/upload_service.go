@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -24,11 +25,12 @@ type UploadSession struct {
 	ChunkDir            string
 	BytesSinceLastCheck int64
 	LastSpeedCheck      time.Time
+	ChunkSize           int64
 }
 
 type UploadService interface {
-	CheckUpload(fingerprint string) (string, []int, bool, error)
-	InitUpload(filename string, totalSize int64, fingerprint string, device string) (string, error)
+	CheckUpload(fingerprint string) (string, []int, int64, bool, error)
+	InitUpload(filename string, totalSize int64, fingerprint string, device string, chunkSize int64) (string, error)
 	StoreChunk(uploadID string, chunkIdx int, src io.Reader) error
 	CompleteUpload(ctx context.Context, uploadID string) (*model.Media, error)
 }
@@ -72,23 +74,29 @@ func (s *uploadService) getMediaDir() string {
 	return s.config.MediaDir
 }
 
-func (s *uploadService) CheckUpload(fingerprint string) (string, []int, bool, error) {
+func (s *uploadService) CheckUpload(fingerprint string) (string, []int, int64, bool, error) {
 	if fingerprint == "" {
-		return "", nil, false, nil
+		return "", nil, 0, false, nil
 	}
 
 	downloads, err := s.downloadRepo.FindAll()
 	if err != nil {
-		return "", nil, false, err
+		return "", nil, 0, false, err
 	}
 
 	for _, dl := range downloads {
 		if dl.Type == "upload" && dl.Status == "uploading" {
 			parts := strings.Split(dl.DestPath, "|")
 			var itemFingerprint string
+			var chunkSize int64 = 5242880 // default 5MB
 			for _, part := range parts {
 				if strings.HasPrefix(part, "fingerprint:") {
 					itemFingerprint = strings.TrimPrefix(part, "fingerprint:")
+				}
+				if strings.HasPrefix(part, "chunk_size:") {
+					if val, err := strconv.ParseInt(strings.TrimPrefix(part, "chunk_size:"), 10, 64); err == nil {
+						chunkSize = val
+					}
 				}
 			}
 			if itemFingerprint == fingerprint {
@@ -100,29 +108,33 @@ func (s *uploadService) CheckUpload(fingerprint string) (string, []int, bool, er
 						Filename:  dl.Title,
 						TotalSize: dl.TotalSize,
 						ChunkDir:  filepath.Join(s.config.UploadDir, dl.ID),
+						ChunkSize: chunkSize,
 					}
 				}
 				s.mu.Unlock()
 
 				chunks, err := s.getUploadedChunks(dl.ID)
 				if err != nil {
-					return "", nil, false, err
+					return "", nil, 0, false, err
 				}
-				return dl.ID, chunks, true, nil
+				return dl.ID, chunks, chunkSize, true, nil
 			}
 		}
 	}
 
-	return "", nil, false, nil
+	return "", nil, 0, false, nil
 }
 
 func (s *uploadService) getUploadedChunks(uploadID string) ([]int, error) {
 	return s.storage.GetUploadedChunks(uploadID)
 }
 
-func (s *uploadService) InitUpload(filename string, totalSize int64, fingerprint string, device string) (string, error) {
+func (s *uploadService) InitUpload(filename string, totalSize int64, fingerprint string, device string, chunkSize int64) (string, error) {
+	if chunkSize <= 0 {
+		chunkSize = 5242880
+	}
 	// First check if there is an existing session
-	existingID, _, exists, err := s.CheckUpload(fingerprint)
+	existingID, _, _, exists, err := s.CheckUpload(fingerprint)
 	if err == nil && exists {
 		return existingID, nil
 	}
@@ -137,6 +149,7 @@ func (s *uploadService) InitUpload(filename string, totalSize int64, fingerprint
 		ChunkDir:            chunkDir,
 		BytesSinceLastCheck: 0,
 		LastSpeedCheck:      time.Now(),
+		ChunkSize:           chunkSize,
 	}
 
 	s.mu.Lock()
@@ -148,7 +161,7 @@ func (s *uploadService) InitUpload(filename string, totalSize int64, fingerprint
 	if deviceInfo == "" {
 		deviceInfo = "Unknown Device"
 	}
-	destPath := fmt.Sprintf("device:%s|fingerprint:%s", deviceInfo, fingerprint)
+	destPath := fmt.Sprintf("device:%s|fingerprint:%s|chunk_size:%d", deviceInfo, fingerprint, chunkSize)
 
 	now := time.Now()
 	dl := &model.Download{
@@ -180,6 +193,15 @@ func (s *uploadService) StoreChunk(uploadID string, chunkIdx int, src io.Reader)
 		// If session was lost from memory but exists in DB, recreate it
 		dl, err := s.downloadRepo.FindByID(uploadID)
 		if err == nil && dl != nil && dl.Type == "upload" {
+			var chunkSize int64 = 5242880 // default 5MB
+			parts := strings.Split(dl.DestPath, "|")
+			for _, part := range parts {
+				if strings.HasPrefix(part, "chunk_size:") {
+					if val, err := strconv.ParseInt(strings.TrimPrefix(part, "chunk_size:"), 10, 64); err == nil {
+						chunkSize = val
+					}
+				}
+			}
 			session = &UploadSession{
 				ID:                  uploadID,
 				Filename:            dl.Title,
@@ -187,6 +209,7 @@ func (s *uploadService) StoreChunk(uploadID string, chunkIdx int, src io.Reader)
 				ChunkDir:            filepath.Join(s.config.UploadDir, uploadID),
 				BytesSinceLastCheck: 0,
 				LastSpeedCheck:      time.Now(),
+				ChunkSize:           chunkSize,
 			}
 			s.sessions[uploadID] = session
 			exists = true
@@ -206,11 +229,15 @@ func (s *uploadService) StoreChunk(uploadID string, chunkIdx int, src io.Reader)
 	s.mu.Lock()
 	var newSpeed float64 = 0.0
 	var updateSpeed = false
-	if time.Since(session.LastSpeedCheck) >= 10*time.Second {
-		newSpeed = float64(session.BytesSinceLastCheck) / 10.0 // bytes per second over 10s window
+	if time.Since(session.LastSpeedCheck) >= 1*time.Second {
+		newSpeed = float64(session.BytesSinceLastCheck) / time.Since(session.LastSpeedCheck).Seconds()
 		session.BytesSinceLastCheck = 0
 		session.LastSpeedCheck = time.Now()
 		updateSpeed = true
+	}
+	chunkSize := session.ChunkSize
+	if chunkSize <= 0 {
+		chunkSize = 5242880
 	}
 	s.mu.Unlock()
 
@@ -219,7 +246,7 @@ func (s *uploadService) StoreChunk(uploadID string, chunkIdx int, src io.Reader)
 	if err == nil {
 		dl, err := s.downloadRepo.FindByID(uploadID)
 		if err == nil && dl != nil {
-			var completedSize int64 = int64(len(chunks)) * 5242880 // 5MB per chunk approx
+			var completedSize int64 = int64(len(chunks)) * chunkSize
 			if completedSize > dl.TotalSize && dl.TotalSize > 0 {
 				completedSize = dl.TotalSize
 			}
@@ -249,11 +276,21 @@ func (s *uploadService) CompleteUpload(ctx context.Context, uploadID string) (*m
 		// Recreate session if needed
 		dl, err := s.downloadRepo.FindByID(uploadID)
 		if err == nil && dl != nil && dl.Type == "upload" {
+			var chunkSize int64 = 5242880
+			parts := strings.Split(dl.DestPath, "|")
+			for _, part := range parts {
+				if strings.HasPrefix(part, "chunk_size:") {
+					if val, err := strconv.ParseInt(strings.TrimPrefix(part, "chunk_size:"), 10, 64); err == nil {
+						chunkSize = val
+					}
+				}
+			}
 			session = &UploadSession{
 				ID:        uploadID,
 				Filename:  dl.Title,
 				TotalSize: dl.TotalSize,
 				ChunkDir:  filepath.Join(s.config.UploadDir, uploadID),
+				ChunkSize: chunkSize,
 			}
 			exists = true
 		}

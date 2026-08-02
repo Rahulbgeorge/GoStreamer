@@ -31,21 +31,37 @@ export const CategoryPage: React.FC<CategoryPageProps> = ({ onBack, onSelectMedi
   // D-pad spatial focus index
   const [focusedIndex, setFocusedIndex] = useState(0);
 
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const allMedia = await mediaService.getAllMedia();
-        setMovies(allMedia);
-        const cats = await mediaService.getCategories();
-        setCategories(cats);
-        const allClips = await mediaService.getClips();
-        setClips(allClips);
-      } catch (err) {
-        console.error("Failed to load category page data", err);
-      } finally {
-        setLoading(false);
+  const fetchData = async () => {
+    try {
+      const allMedia = await mediaService.getAllMedia();
+      setMovies(allMedia);
+      const cats = await mediaService.getCategories();
+      setCategories(cats);
+      const allClips = await mediaService.getClips();
+      setClips(allClips);
+    } catch (err) {
+      console.error("Failed to load category page data", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSaveClipToLibrary = async (clipId: string) => {
+    try {
+      const res = await mediaService.saveClipToLibrary(clipId);
+      window.alert(res.message || "Clip saved successfully to local library!");
+      fetchData();
+      if (res.media) {
+        if (window.confirm("Would you like to play and loop the saved clip now?")) {
+          onSelectMedia(res.media);
+        }
       }
-    };
+    } catch (err: any) {
+      window.alert("Failed to save clip to library: " + err.message);
+    }
+  };
+
+  useEffect(() => {
     fetchData();
   }, []);
 
@@ -325,7 +341,30 @@ export const CategoryPage: React.FC<CategoryPageProps> = ({ onBack, onSelectMedi
                         </span>
                       </div>
                       <div className="clip-card-info">
-                        <h4>{clip.title}</h4>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <h4 style={{ margin: 0 }}>{clip.title}</h4>
+                          <div style={{ display: 'flex', gap: '8px' }}>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleSaveClipToLibrary(clip.id);
+                              }}
+                              title="Save Clip to App Library on Device"
+                              style={{ border: 'none', cursor: 'pointer', fontSize: '1.1rem', background: 'rgba(255,255,255,0.1)', padding: '4px 8px', borderRadius: '6px' }}
+                            >
+                              💾
+                            </button>
+                            <a 
+                              href={mediaService.getClipDownloadUrl(clip.id)} 
+                              download 
+                              onClick={(e) => e.stopPropagation()} 
+                              title="Download Clip File (.mp4) to PC"
+                              style={{ fontSize: '1.1rem', textDecoration: 'none', background: 'rgba(255,255,255,0.1)', padding: '4px 8px', borderRadius: '6px' }}
+                            >
+                              ⬇️
+                            </a>
+                          </div>
+                        </div>
                         {parentMedia && <p className="parent-movie-title">🎥 {parentMedia.title}</p>}
                       </div>
                     </div>

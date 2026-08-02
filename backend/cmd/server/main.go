@@ -70,7 +70,7 @@ func main() {
 	systemCtrl := controller.NewSystemController()
 	downloadCtrl := controller.NewDownloadController(downloadRepo, torrentService, cfg)
 	categoryCtrl := controller.NewCategoryController(categoryRepo)
-	clipCtrl := controller.NewClipController(cfg, clipRepo, mediaRepo)
+	clipCtrl := controller.NewClipController(cfg, clipRepo, mediaRepo, prefRepo, scannerService)
 
 	// 5. Start file auto-discovery services
 	ctx, cancel := context.WithCancel(context.Background())
